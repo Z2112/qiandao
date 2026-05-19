@@ -1,7 +1,7 @@
 // cron: 0 8,15 * * *
 // new Env('52pojie签到[大模型识别版]');
 // author: Jie
-// version: 1.0
+// version: 1.1
 
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
@@ -104,10 +104,13 @@ async function doSign(page) {
 async function main() {
   console.log('=== 52pojie 签到开始（大模型版）===');
 
-  // 随机延迟 1~30 分钟
-  const randomMinutes = Math.floor(Math.random() * 30) + 1;
-  console.log(`随机延迟 ${randomMinutes} 分钟后执行...`);
-  await delay(randomMinutes * 60 * 1000);
+  // ==================== 随机延迟配置 ====================
+  if (process.env.RANDOM_SIGNIN === 'true') {
+    const maxDelay = parseInt(process.env.MAX_RANDOM_DELAY) || 1800;
+    const randomDelay = Math.floor(Math.random() * maxDelay) + 1;
+    console.log(`随机延迟 ${randomDelay} 秒后执行...`);
+    await delay(randomDelay * 1000);
+  }
 
   let browser;
   let status = '';
