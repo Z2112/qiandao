@@ -1,183 +1,151 @@
-# -*- coding: utf-8 -*-
-"""
-cron: 0 8,15 * * *
-new Env('52pojie签到[大模型识别版]');
-"""
+// cron: 0 8,15 * * *
+// new Env('52pojie签到[大模型识别版]');
+// author: Jie
+// version: 1.0
 
-"""
-======================= 脚本说明 =======================
-脚本名称: 52pojie 自动签到（大模型识别验证码版）
-功能: 
-  - 自动登录 52pojie（吾爱破解）
-  - 自动识别并填写验证码（使用大模型视觉能力）
-  - 支持失败重试 1 次
-  - 每次执行前随机延迟 1~30 分钟（降低风控风险）
-  - 支持青龙面板订阅使用
+const puppeteer = require('puppeteer-core');
+const fs = require('fs');
+const axios = require('axios');
+const notify = require('./sendNotify');
 
-使用方式:
-  1. 将本脚本上传到 GitHub 仓库
-  2. 在青龙面板使用 ql repo 订阅仓库
-  3. 配置下方所需的环境变量
-  4. 青龙会自动识别 cron 并创建定时任务（默认早8点、下午3点各执行一次）
+const COOKIE_FILE = '/ql/data/scripts/cookies.json';
 
-环境变量配置（青龙面板添加）:
-  PJ52_COOKIE     : 52pojie 的 Cookie（必须）
-  LLM_API_URL     : 大模型 API 地址（如 https://api.openai.com/v1）
-  LLM_API_KEY     : 大模型的 API Key
-  LLM_MODEL       : 使用的模型名称（如 gpt-4o、qwen-vl-plus、glm-4v 等）
+const LLM_API_URL = process.env.LLM_API_URL || '';
+const LLM_API_KEY = process.env.LLM_API_KEY || '';
+const LLM_MODEL = process.env.LLM_MODEL || 'gpt-4o';
 
-依赖安装（青龙依赖管理）:
-  playwright
-  aiohttp
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
- playwright 浏览器安装（在青龙终端执行）:
-  playwright install chromium
+const LAUNCH_OPTIONS = {
+  headless: true,
+  executablePath: '/usr/bin/chromium',
+  args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+};
 
-注意事项:
-  - 建议使用质量较好的代理或住宅 IP，否则容易触发验证码
-  - 大模型识别验证码成功率较高，但仍有可能失败（已内置重试）
-  - Cookie 建议定期更新
-=======================================================
-"""
+async function loadCookies(page) {
+  const envCookies = process.env.PJ52_COOKIES;
+  let cookies = [];
+  if (envCookies) {
+    try { cookies = JSON.parse(envCookies); } catch (e) {}
+  } else if (fs.existsSync(COOKIE_FILE)) {
+    try { cookies = JSON.parse(fs.readFileSync(COOKIE_FILE, 'utf8')); } catch (e) {}
+  }
+  if (cookies.length > 0) await page.setCookie(...cookies);
+}
 
-import os
-import base64
-import random
-import asyncio
-from playwright.async_api import async_playwright
-import aiohttp
-from notify import send
+async function getSignStatus(page) {
+  await page.goto('https://www.52pojie.cn/', { waitUntil: 'networkidle2', timeout: 30000 });
+  await delay(3000);
+  const html = await page.content();
+  if (html.includes('wbs.png')) return '已签到';
+  if (html.includes('qds.png')) return '未签到';
+  return '未知状态';
+}
 
-# ==================== 环境变量配置 ====================
-PJ52_COOKIE = os.getenv("PJ52_COOKIE", "")
-LLM_API_URL = os.getenv("LLM_API_URL", "")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
+async function recognizeCaptcha(base64Image) {
+  if (!LLM_API_URL || !LLM_API_KEY) return null;
+  try {
+    const res = await axios.post(`${LLM_API_URL}/chat/completions`, {
+      model: LLM_MODEL,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "请只返回图片中的验证码字符，不要任何解释。" },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${base64Image}` } }
+        ]
+      }],
+      max_tokens: 10
+    }, {
+      headers: { Authorization: `Bearer ${LLM_API_KEY}` }
+    });
+    return res.data.choices[0].message.content.trim();
+  } catch (e) {
+    console.log('大模型识别失败:', e.message);
+    return null;
+  }
+}
 
+async function doSign(page) {
+  console.log('访问签到任务页...');
+  await page.goto('https://www.52pojie.cn/home.php?mod=task&do=apply&id=2', {
+    waitUntil: 'networkidle2',
+    timeout: 30000
+  });
+  await delay(5000);
 
-async def recognize_captcha(base64_image: str) -> str:
-    """调用大模型识别验证码"""
-    if not LLM_API_URL or not LLM_API_KEY:
-        print("未配置大模型环境变量，跳过识别")
-        return ""
+  const html = await page.content();
+  const isVerifyPage = html.includes('IP:') || html.includes('type="text"');
 
-    headers = {
-        "Authorization": f"Bearer {LLM_API_KEY}",
-        "Content-Type": "application/json"
+  if (isVerifyPage) {
+    console.log('检测到验证码页面，正在识别...');
+    const img = await page.$('img');
+    if (img) {
+      const base64 = await img.screenshot({ encoding: 'base64' });
+      const code = await recognizeCaptcha(base64);
+
+      if (code) {
+        console.log(`大模型识别结果: ${code}`);
+        await page.type('input[type="text"]', code);
+        await delay(800);
+        const submit = await page.$('button, input[type="submit"]');
+        if (submit) await submit.click();
+        await delay(6000);
+      } else {
+        console.log('验证码识别失败');
+      }
+    }
+  }
+
+  return await getSignStatus(page);
+}
+
+async function main() {
+  console.log('=== 52pojie 签到开始（大模型版）===');
+
+  // 随机延迟 1~30 分钟
+  const randomMinutes = Math.floor(Math.random() * 30) + 1;
+  console.log(`随机延迟 ${randomMinutes} 分钟后执行...`);
+  await delay(randomMinutes * 60 * 1000);
+
+  let browser;
+  let status = '';
+  let result = '';
+
+  try {
+    browser = await puppeteer.launch(LAUNCH_OPTIONS);
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36');
+
+    await loadCookies(page);
+    status = await getSignStatus(page);
+    console.log('当前状态:', status);
+
+    if (status === '未签到') {
+      result = await doSign(page);
+      console.log('签到后状态:', result);
+    } else {
+      result = '无需重复签到';
     }
 
-    payload = {
-        "model": LLM_MODEL,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "请只返回图片中的验证码字符，不要任何解释。"},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
-            ]
-        }],
-        "max_tokens": 10
+  } catch (err) {
+    result = '执行异常: ' + err.message;
+    console.error(result);
+  } finally {
+    if (browser) {
+      try { await browser.close(); } catch (e) {}
     }
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(f"{LLM_API_URL}/chat/completions", json=payload, headers=headers) as resp:
-                data = await resp.json()
-                return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"大模型识别失败: {e}")
-        return ""
+    const title = '52pojie 签到通知';
+    const content = `签到状态：${status}\n执行结果：${result}\n时间：${new Date().toLocaleString('zh-CN')}`;
+    await notify.sendNotify(title, content);
+  }
 
+  console.log('=== 签到结束 ===');
+}
 
-async def do_sign(page) -> str:
-    """执行签到主流程"""
-    print("正在访问签到任务页面...")
-    await page.goto("https://www.52pojie.cn/home.php?mod=task&do=apply&id=2", wait_until="networkidle", timeout=30000)
-    await asyncio.sleep(5)
-
-    content = await page.content()
-
-    # 判断是否进入验证码验证页
-    if "IP:" in content or 'type="text"' in content:
-        print("检测到验证码验证页面，正在使用大模型识别...")
-        img = await page.query_selector("img")
-        if img:
-            img_bytes = await img.screenshot()
-            base64_img = base64.b64encode(img_bytes).decode()
-            code = await recognize_captcha(base64_img)
-
-            if code:
-                print(f"大模型识别结果: {code}")
-                await page.fill('input[type="text"]', code)
-                await asyncio.sleep(0.8)
-
-                # 点击提交按钮
-                submit_btn = await page.query_selector("button, input[type='submit']")
-                if submit_btn:
-                    await submit_btn.click()
-                await asyncio.sleep(6)
-            else:
-                print("验证码识别失败")
-        else:
-            print("未找到验证码图片")
-
-    # 重新检查签到状态
-    await page.goto("https://www.52pojie.cn/", wait_until="networkidle", timeout=30000)
-    await asyncio.sleep(3)
-    final_content = await page.content()
-
-    if "wbs.png" in final_content:
-        return "签到成功"
-    else:
-        return "签到失败"
-
-
-async def main():
-    if not PJ52_COOKIE:
-        print("未配置 PJ52_COOKIE 环境变量，终止执行")
-        return
-
-    # ==================== 随机延迟 1~30 分钟 ====================
-    delay_minutes = random.randint(1, 30)
-    print(f"随机延迟 {delay_minutes} 分钟后执行签到...")
-    await asyncio.sleep(delay_minutes * 60)
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-
-        # 解析并添加 Cookie
-        cookies = []
-        for item in PJ52_COOKIE.split(";"):
-            if "=" in item:
-                key, value = item.strip().split("=", 1)
-                cookies.append({"name": key, "value": value, "domain": ".52pojie.cn", "path": "/"})
-        await context.add_cookies(cookies)
-
-        page = await context.new_page()
-
-        # 先检查是否已经签到
-        await page.goto("https://www.52pojie.cn/", wait_until="networkidle", timeout=30000)
-        await asyncio.sleep(3)
-        if "wbs.png" in await page.content():
-            msg = "今日已签到，无需重复操作"
-            print(msg)
-            send("52pojie签到通知", msg)
-            await browser.close()
-            return
-
-        # 执行签到（失败自动重试一次）
-        result = await do_sign(page)
-        if result != "签到成功":
-            print("首次签到未成功，准备重试...")
-            await asyncio.sleep(5)
-            result = await do_sign(page)
-
-        print(result)
-        send("52pojie签到通知", result)
-        await browser.close()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+main().catch(err => {
+  console.error('脚本运行出错:', err);
+  process.exit(1);
+});
