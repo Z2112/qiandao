@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
+# cron: 0 10 * * *
+
 """
-青龙面板 - JKForum 最终智能完整版
-功能：自动判断任务状态 + 智能跳过已完成任务 + 详细日志
+青龙面板 - JKForum 最终智能版（支持随机延迟）
+环境变量：
+  RANDOM_SIGNIN=true          # 是否启用随机延迟
+  MAX_RANDOM_DELAY=3600       # 最大随机延迟秒数（默认3600秒）
 """
 
 import os
@@ -19,6 +23,10 @@ except ImportError:
 JKFORUM_COOKIE = os.environ.get("JKFORUM_COOKIE", "")
 DATA_FILE = "jkforum_data.json"
 
+# ==================== 随机延迟配置 ====================
+RANDOM_SIGNIN = os.environ.get("RANDOM_SIGNIN", "false").lower() == "true"
+MAX_RANDOM_DELAY = int(os.environ.get("MAX_RANDOM_DELAY", 3600))
+
 VIEW_BOARDS = [141, 555, 374, 382, 246]
 
 HEADERS = {
@@ -34,6 +42,17 @@ TRACK_KEYS = {
     1: "名声", 2: "金币", 5: "宝石", 7: "体力", 9: "总积分"
 }
 
+
+def random_delay_if_enabled():
+    """根据环境变量决定是否执行随机延迟"""
+    if RANDOM_SIGNIN:
+        delay = random.randint(1, MAX_RANDOM_DELAY)
+        minutes = delay // 60
+        seconds = delay % 60
+        
+        print(f"\n[随机延迟] RANDOM_SIGNIN 已启用，剩余 {minutes} 分钟 {seconds} 秒后开始执行...")
+        time.sleep(delay)
+        print("    ✅ 延迟结束，开始执行任务\n")
 
 def load_last_data():
     if os.path.exists(DATA_FILE):
@@ -79,6 +98,18 @@ def get_daily_stages(cookies):
         return {}
     except:
         return {}
+
+
+def should_perform_task(task):
+    if task.get("isCompleted"):
+        return False
+    details = task.get("details", [])
+    if not details:
+        return True
+    detail = details[0]
+    if detail.get("progressScore", 0) >= detail.get("goalScore", 0):
+        return "claim_only"
+    return True
 
 
 def do_sign_in(cookies):
@@ -245,11 +276,26 @@ def complete_daily_stage(cookies, stage_id):
         return False
 
 
+def complete_task(cookies, task_id):
+    url = "https://jkforum.net/api/jkf-dailyTask-api/v1/DailyTask/CompleteTask"
+    try:
+        resp = requests.post(url, headers=HEADERS, cookies=cookies, json={"taskId": task_id}, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("code") == "200000"
+        return False
+    except:
+        return False
+
+
 def jkforum_main():
     print("\n" + "=" * 65)
     print(f"🚀 JKForum 智能脚本启动")
     print(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 65)
+
+    # 随机延迟（如果启用）
+    random_delay_if_enabled()
 
     if not JKFORUM_COOKIE:
         print("❌ 未设置 JKFORUM_COOKIE 环境变量")
@@ -258,7 +304,6 @@ def jkforum_main():
     cookies = {k.strip(): v.strip() for k, v in 
                (item.split("=", 1) for item in JKFORUM_COOKIE.split(";") if "=" in item)}
 
-    # 获取任务状态
     tasks = get_daily_tasks(cookies)
     task_status = {t["name"]: t.get("isCompleted", False) for t in tasks}
     incomplete_tasks = [name for name, completed in task_status.items() if not completed]
@@ -271,18 +316,32 @@ def jkforum_main():
     print("-" * 65)
 
     if not incomplete_tasks:
-        print("\n✅ 所有每日任务已完成，无需执行浏览和点赞操作")
+        print("\n✅ 所有每日任务已完成，无需执行操作")
     else:
         print(f"\n🔄 发现 {len(incomplete_tasks)} 个未完成任务，开始执行...")
 
+        # 每日签到
         if not task_status.get("進行每日簽到", False):
             do_sign_in(cookies)
 
-        if (not task_status.get("觀看任30篇文章", True) or
-            not task_status.get("對三篇文章點讚", True) or
-            not task_status.get("對三則留言點讚", True)):
+        # 全任务进度判断
+        need_browse_like = False
+
+        for task in tasks:
+            task_name = task["name"]
+            action = should_perform_task(task)
+
+            if action == "claim_only":
+                complete_task(cookies, task["id"])
+                print(f"    [{task_name}] 进度已达标，已调用完成接口")
+            elif action is True:
+                if task_name in ["觀看任30篇文章", "對三篇文章點讚", "對三則留言點讚"]:
+                    need_browse_like = True
+
+        if need_browse_like:
             do_browse_and_like_tasks(cookies)
 
+        # 逛逛特定版區
         if (not task_status.get("逛逛版區-女神焦點", True) or
             not task_status.get("逛逛版區-IG推特美女", True)):
             browse_specific_boards(cookies)
