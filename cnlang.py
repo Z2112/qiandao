@@ -6,12 +6,14 @@ new Env('国语视界签到[完整积分版]');
 
 import os
 import re
+import time
+import random
 import requests
 from bs4 import BeautifulSoup
 from sendNotify import send
 
 FLARESOLVERR_URL = os.getenv("FLARESOLVERR_URL")
-SIGNIN_URL = "https://cnlang.org/dsu_paulsign-sign.html?mobile=no"   # ← 已补充
+SIGNIN_URL = "https://cnlang.org/dsu_paulsign-sign.html?mobile=no"
 
 
 def parse_cookie_to_list(cookie_str):
@@ -86,6 +88,18 @@ def sign():
         print(msg)
         send("国语视界签到", msg)
         return
+
+    # ==================== 随机延迟（可选） ====================
+    if os.getenv("RANDOM_SIGNIN", "").lower() == "true":
+        max_delay = int(os.getenv("MAX_RANDOM_DELAY", 3600))
+        delay_seconds = random.randint(1, max_delay)
+
+        minutes = delay_seconds // 60
+        seconds = delay_seconds % 60
+
+        print(f"【随机延迟】已开启，将在 {minutes} 分钟 {seconds} 秒后开始执行...")
+        time.sleep(delay_seconds)
+    # ========================================================
 
     print("正在通过 FlareSolverr（带登录Cookie）解决 Cloudflare...")
 
