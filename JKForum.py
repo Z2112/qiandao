@@ -2,9 +2,9 @@
 # cron: 0 10 * * *
 
 """
-青龙面板 - JKForum 最终智能版（支持随机延迟）
-环境变量：
-  RANDOM_SIGNIN=true          # 是否启用随机延迟
+青龙面板 - JKForum 最终智能版
+环境变量说明：
+  RANDOM_SIGNIN=true          # 是否启用启动随机延迟（默认关闭）
   MAX_RANDOM_DELAY=3600       # 最大随机延迟秒数（默认3600秒）
 """
 
@@ -23,9 +23,21 @@ except ImportError:
 JKFORUM_COOKIE = os.environ.get("JKFORUM_COOKIE", "")
 DATA_FILE = "jkforum_data.json"
 
-# ==================== 随机延迟配置 ====================
+# ==================== 随机延迟配置（默认关闭） ====================
 RANDOM_SIGNIN = os.environ.get("RANDOM_SIGNIN", "false").lower() == "true"
 MAX_RANDOM_DELAY = int(os.environ.get("MAX_RANDOM_DELAY", 3600))
+
+
+def random_delay_if_enabled():
+    """随机延迟（仅当 RANDOM_SIGNIN=true 时生效）"""
+    if RANDOM_SIGNIN:
+        delay = random.randint(1, MAX_RANDOM_DELAY)
+        minutes = delay // 60
+        seconds = delay % 60
+        print(f"\n[随机延迟] RANDOM_SIGNIN 已启用，剩余 {minutes} 分钟 {seconds} 秒后开始执行...")
+        time.sleep(delay)
+        print("    ✅ 延迟结束，开始执行任务\n")
+
 
 VIEW_BOARDS = [141, 555, 374, 382, 246]
 
@@ -42,17 +54,6 @@ TRACK_KEYS = {
     1: "名声", 2: "金币", 5: "宝石", 7: "体力", 9: "总积分"
 }
 
-
-def random_delay_if_enabled():
-    """根据环境变量决定是否执行随机延迟"""
-    if RANDOM_SIGNIN:
-        delay = random.randint(1, MAX_RANDOM_DELAY)
-        minutes = delay // 60
-        seconds = delay % 60
-        
-        print(f"\n[随机延迟] RANDOM_SIGNIN 已启用，剩余 {minutes} 分钟 {seconds} 秒后开始执行...")
-        time.sleep(delay)
-        print("    ✅ 延迟结束，开始执行任务\n")
 
 def load_last_data():
     if os.path.exists(DATA_FILE):
@@ -294,7 +295,7 @@ def jkforum_main():
     print(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 65)
 
-    # 随机延迟（如果启用）
+    # 随机延迟（默认关闭）
     random_delay_if_enabled()
 
     if not JKFORUM_COOKIE:
