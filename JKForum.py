@@ -1,12 +1,30 @@
-# -*- coding: utf-8 -*-
 # cron: 0 10 * * *
 # new Env('JKForum签到')
 
 """
-青龙面板 - JKForum 最终智能版
-环境变量说明：
-  RANDOM_SIGNIN=true          # 是否启用启动随机延迟（默认关闭）
-  MAX_RANDOM_DELAY=3600       # 最大随机延迟秒数（默认3600秒）
+【青龙面板使用说明】
+
+1. 依赖安装（必须）：
+   - 青龙面板 → 依赖管理 → Python3 依赖 → 新增：
+     - requests
+   - 安装完成后重启青龙
+
+2. 环境变量设置：
+   - JKFORUM_COOKIE      （必填，支持多账号）多个 Cookie 用 & 分割 或 换行分割
+   - RANDOM_SIGNIN       （可选）true = 开启随机延迟
+   - MAX_RANDOM_DELAY    （可选）随机延迟最大秒数，默认 3600 秒
+
+3. 多账号配置示例（JKFORUM_COOKIE 中填写）：
+   Cookie字符串1&Cookie字符串2&Cookie字符串3
+   或者每行一个 Cookie（推荐）：
+   Cookie字符串1
+   Cookie字符串2
+   Cookie字符串3
+
+4. 注意事项：
+   - 已签到的账号完全不发送任何通知
+   - 只有签到成功 或 签到失败 时才会推送通知
+   - 多账号时只会发送一条汇总通知
 """
 
 import os
@@ -15,16 +33,12 @@ import random
 import time
 import requests
 from datetime import datetime
-
-try:
-    from sendNotify import send
-except ImportError:
-    send = lambda t, c: print("推送未启用")
+from notify import send   # 青龙标准通知模块
 
 JKFORUM_COOKIE = os.environ.get("JKFORUM_COOKIE", "")
 DATA_FILE = "jkforum_data.json"
 
-# ==================== 随机延迟配置（默认关闭） ====================
+# ==================== 随机延迟配置 ====================
 RANDOM_SIGNIN = os.environ.get("RANDOM_SIGNIN", "false").lower() == "true"
 MAX_RANDOM_DELAY = int(os.environ.get("MAX_RANDOM_DELAY", 3600))
 
@@ -38,6 +52,29 @@ def random_delay_if_enabled():
         print(f"\n[随机延迟] RANDOM_SIGNIN 已启用，剩余 {minutes} 分钟 {seconds} 秒后开始执行...")
         time.sleep(delay)
         print("    ✅ 延迟结束，开始执行任务\n")
+
+
+def get_all_cookies():
+    """支持 & 或换行分割的多账号"""
+    raw = JKFORUM_COOKIE
+    if not raw:
+        msg = "❌ 未设置 JKFORUM_COOKIE 环境变量，请检查配置"
+        print(msg)
+        send("JKForum签到", msg)
+        return []
+
+    # 支持 & 分割 和 换行分割
+    cookies_list = [c.strip() for line in raw.split('&') for c in line.split('\n') if c.strip()]
+    cookies_list = [c for c in cookies_list if len(c) > 20]
+
+    if not cookies_list:
+        msg = "❌ JKFORUM_COOKIE 内容为空或格式错误"
+        print(msg)
+        send("JKForum签到", msg)
+        return []
+
+    print(f"✅ 从 JKFORUM_COOKIE 读取到 {len(cookies_list)} 个账号")
+    return cookies_list
 
 
 VIEW_BOARDS = [141, 555, 374, 382, 246]
@@ -292,34 +329,41 @@ def complete_task(cookies, task_id):
 
 def jkforum_main():
     print("\n" + "=" * 65)
-    print(f"🚀 JKForum 智能脚本启动")
+    print(f"🚀 JKForum 智能脚本启动（多账号版）")
     print(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 65)
 
-    # 随机延迟（默认关闭）
+    # 随机延迟
     random_delay_if_enabled()
 
-    if not JKFORUM_COOKIE:
-        print("❌ 未设置 JKFORUM_COOKIE 环境变量")
+    cookie_list = get_all_cookies()
+    if not cookie_list:
         return
 
-    cookies = {k.strip(): v.strip() for k, v in 
-               (item.split("=", 1) for item in JKFORUM_COOKIE.split(";") if "=" in item)}
+    all_results = []
 
-    tasks = get_daily_tasks(cookies)
-    task_status = {t["name"]: t.get("isCompleted", False) for t in tasks}
-    incomplete_tasks = [name for name, completed in task_status.items() if not completed]
+    for idx, single_cookie in enumerate(cookie_list, 1):
+        print(f"\n📌 开始处理第 {idx}/{len(cookie_list)} 个账号")
 
-    print("\n📋 当前每日任务状态：")
-    print("-" * 65)
-    for name, completed in task_status.items():
-        status = "✅ 已完成" if completed else "❌ 未完成"
-        print(f"  {name:<22} {status}")
-    print("-" * 65)
+        cookies = {k.strip(): v.strip() for k, v in 
+                   (item.split("=", 1) for item in single_cookie.split(";") if "=" in item)}
 
-    if not incomplete_tasks:
-        print("\n✅ 所有每日任务已完成，无需执行操作")
-    else:
+        tasks = get_daily_tasks(cookies)
+        task_status = {t["name"]: t.get("isCompleted", False) for t in tasks}
+        incomplete_tasks = [name for name, completed in task_status.items() if not completed]
+
+        print("\n📋 当前每日任务状态：")
+        print("-" * 65)
+        for name, completed in task_status.items():
+            status = "✅ 已完成" if completed else "❌ 未完成"
+            print(f"  {name:<22} {status}")
+        print("-" * 65)
+
+        if not incomplete_tasks:
+            print("\n✅ 所有每日任务已完成，无需执行操作")
+            all_results.append(f"账号{idx}: 今日已签到")
+            continue
+
         print(f"\n🔄 发现 {len(incomplete_tasks)} 个未完成任务，开始执行...")
 
         # 每日签到
@@ -348,62 +392,47 @@ def jkforum_main():
             not task_status.get("逛逛版區-IG推特美女", True)):
             browse_specific_boards(cookies)
 
-    claim_daily_stage_rewards(cookies)
+        claim_daily_stage_rewards(cookies)
 
-    # 获取资产
-    user_info = get_user_info(cookies)
-    current_assets = {}
-    change_text = "无变化"
+        # 获取资产
+        user_info = get_user_info(cookies)
+        current_assets = {}
+        change_text = "无变化"
 
-    if user_info and "content" in user_info:
-        content = user_info["content"]
-        wallet = content.get("wallet", {}).get("credits", [])
-        current_assets = {TRACK_KEYS.get(item["id"], str(item["id"])): item.get("point", 0) 
-                          for item in wallet if item.get("id") in TRACK_KEYS}
+        if user_info and "content" in user_info:
+            content = user_info["content"]
+            wallet = content.get("wallet", {}).get("credits", [])
+            current_assets = {TRACK_KEYS.get(item["id"], str(item["id"])): item.get("point", 0) 
+                              for item in wallet if item.get("id") in TRACK_KEYS}
 
-        last_assets = load_last_data()
-        if last_assets:
-            change_lines = []
-            for name, current in current_assets.items():
-                last = last_assets.get(name, current)
-                diff = current - last
-                if diff != 0:
-                    change_lines.append(f"{name}: {'+' if diff > 0 else ''}{diff}")
-            change_text = "\n".join(change_lines) if change_lines else "无变化"
+            last_assets = load_last_data()
+            if last_assets:
+                change_lines = []
+                for name, current in current_assets.items():
+                    last = last_assets.get(name, current)
+                    diff = current - last
+                    if diff != 0:
+                        change_lines.append(f"{name}: {'+' if diff > 0 else ''}{diff}")
+                change_text = "\n".join(change_lines) if change_lines else "无变化"
 
-        save_current_data(current_assets)
+            save_current_data(current_assets)
 
-    print("\n" + "=" * 65)
-    print("📊 执行结果汇总")
-    print("=" * 65)
-    print(f"""
-【当前资产】
-  金币   : {current_assets.get('金币', 0)}
-  宝石   : {current_assets.get('宝石', 0)}
-  名声   : {current_assets.get('名声', 0)}
-  体力   : {current_assets.get('体力', 0)}
+        result = f"✅ 签到完成 | 当前积分: {current_assets.get('金币', 0)}"
+        print(result)
+        all_results.append(f"账号{idx}: {result}")
 
-【资产变化】
-{change_text if change_text != '无变化' else '  无变化'}
-""")
-    print("=" * 65)
-    print("✅ 脚本执行完成")
-    print("=" * 65 + "\n")
+        # 只有成功或失败才通知（已签到不通知）
+        if send:
+            send(f"JKForum签到 - 账号{idx}", result)
 
-    output = f"""任务执行完成
-
-【当前资产】
-金币: {current_assets.get('金币', 0)}
-宝石: {current_assets.get('宝石', 0)}
-名声: {current_assets.get('名声', 0)}
-体力: {current_assets.get('体力', 0)}
-
-【资产变化】
-{change_text}"""
-
-    title = f"JKForum 签到 | {datetime.now().strftime('%m-%d %H:%M')}"
-    send(title, output)
-
+    # ====================== 最终汇总 ====================
+    if all_results:
+        summary = "\n".join(all_results)
+        print("\n" + "=" * 65)
+        print("📊 多账号签到汇总")
+        print("=" * 65)
+        print(summary)
+        print("=" * 65)
 
 if __name__ == "__main__":
     jkforum_main()
