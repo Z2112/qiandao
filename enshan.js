@@ -5,7 +5,7 @@
 // 运行环境: 青龙面板 / Node.js + Puppeteer
 // =============================================
 // cron: 0 8,15 * * *
-// new Env('恩山签到');
+// new Env('恩山签到')
 
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
