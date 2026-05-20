@@ -1,6 +1,6 @@
 // =============================================
 // 恩山无线论坛（right.com.cn）自动签到脚本
-// 版本: 1.7 (纯 API fetch 判断已签到 + 仅未签到时才启动浏览器)
+// 版本: 1.8 (纯 API fetch 判断已签到 + 仅未签到时才启动浏览器 + 恢复 RANDOM_SIGNIN / MAX_RANDOM_DELAY)
 // 作者: 原脚本作者 + Grok 修改
 // 运行环境: 青龙面板 / Node.js + Puppeteer
 // =============================================
@@ -14,8 +14,8 @@ const notify = require('./sendNotify');
 
 // ====================== 配置 ======================
 const COOKIES_ENV = process.env.ENSHAN_COOKIE;
-const RANDOM_SIGNIN = process.env.RANDOM_SIGNIN === 'true';
-const MAX_RANDOM_DELAY = parseInt(process.env.MAX_RANDOM_DELAY) || 1800;
+const RANDOM_SIGNIN = process.env.RANDOM_SIGNIN === 'true';        // ← 已恢复
+const MAX_RANDOM_DELAY = parseInt(process.env.MAX_RANDOM_DELAY) || 1800;  // ← 已恢复（默认30分钟）
 const FORUM_BASE = 'https://www.right.com.cn/forum';
 
 // ====================== Cookie 解析 ======================
@@ -58,10 +58,13 @@ function extractEnshanCoins(text) {
 (async () => {
     console.log('🚀 【恩山无线论坛】签到任务开始...');
 
+    // ====================== 随机延迟（已恢复支持） ======================
     if (RANDOM_SIGNIN) {
         const delay = Math.floor(Math.random() * MAX_RANDOM_DELAY) + 1;
         console.log(`⏳ 随机延迟 ${delay} 秒（防风控）...`);
         await new Promise(r => setTimeout(r, delay * 1000));
+    } else {
+        console.log('ℹ️  RANDOM_SIGNIN 未开启，跳过随机延迟');
     }
 
     const cookies = parseCookies(COOKIES_ENV);
@@ -73,7 +76,6 @@ function extractEnshanCoins(text) {
     
     const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
 
-    // 使用你提供的完整 fetch 请求
     const checkResponse = await fetch(`${FORUM_BASE}/erling_qd-sign_in.html`, {
         headers: {
             "cache-control": "max-age=0",
@@ -98,12 +100,11 @@ function extractEnshanCoins(text) {
 
     const checkText = await checkResponse.text();
 
-    // 判断是否已签到
     if (checkText.includes('disabled>已签到</button>') || checkText.includes('已签到</button>')) {
         console.log('✅ 【纯 API 判断】已检测到【已签到】状态，直接结束任务（未启动浏览器）');
         const msg = `【恩山无线论坛】今日已签到\n无需重复签到\n时间: ${new Date().toLocaleString('zh-CN')}`;
         await notify.sendNotify('恩山无线论坛签到', msg);
-        return;   // 直接结束，不启动浏览器
+        return;
     } else {
         console.log('🔄 【纯 API 判断】未签到，继续执行签到流程...');
     }
