@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # cron: 0 10 * * *
+# new Env('国语视界签到')
 
 """
 青龙面板 - JKForum 最终智能版
