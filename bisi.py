@@ -2,120 +2,168 @@
 # new Env('比思论坛签到')
 
 """
-比思论坛自动签到脚本（适配青龙面板）
-环境变量：
-    BISI_COOKIE          必填，你的论坛Cookie（完整字符串）
-    RANDOM_SIGNIN        可选，设置为 true 开启随机延迟（默认不开启）
-    MAX_RANDOM_DELAY     可选，最大延迟秒数（默认3600秒），需配合 RANDOM_SIGNIN=true 使用
+【青龙面板使用说明】
+
+1. 依赖安装（必须）：
+   - 青龙面板 → 依赖管理 → Python3 依赖 → 新增：
+     - requests
+   - 安装完成后重启青龙
+
+2. 环境变量设置：
+   - BISI_COOKIE       （必填，支持多账号）多个 Cookie 用 & 分割 或 换行分割
+   - RANDOM_SIGNIN     （可选）true = 开启随机延迟
+   - MAX_RANDOM_DELAY  （可选）随机延迟最大秒数，默认 3600 秒
+
+3. 多账号配置示例（BISI_COOKIE 中填写）：
+   Cookie字符串1&Cookie字符串2&Cookie字符串3
+   或者每行一个 Cookie（推荐）：
+   Cookie字符串1
+   Cookie字符串2
+   Cookie字符串3
+
+4. 注意事项：
+   - 已签到的账号完全不发送通知
+   - 只有签到成功 或 签到失败 时才会推送通知
 """
 
 import os
 import random
 import re
 import time
-
 import requests
+from notify import send   # 青龙标准通知模块
 
-print("【比思论坛签到】脚本开始执行...")
+print("【比思论坛签到】多账号任务开始...")
 
-# ====================== 环境变量读取 ======================
-cookie = os.environ.get("BISI_COOKIE")
-if not cookie:
-    print("❌ 未检测到 BISI_COOKIE 环境变量，请先添加！")
-    exit(1)
+# ====================== 获取所有 Cookie ======================
+def get_all_cookies():
+    raw = os.getenv("BISI_COOKIE", "")
+    if not raw:
+        msg = "❌ 未设置 BISI_COOKIE 环境变量，请检查青龙面板"
+        print(msg)
+        send("比思论坛签到", msg)
+        exit(1)
 
-# 随机延迟配置
-random_signin = os.environ.get("RANDOM_SIGNIN"， "false").strip().lower() == "true"
-max_delay = int(os.environ.get("MAX_RANDOM_DELAY"， "3600").strip())
+    cookies_list = [c.strip() for line in raw.split('&') for c in line.split('\n') if c.strip()]
+    cookies_list = [c for c in cookies_list if len(c) > 20]
+
+    if not cookies_list:
+        msg = "❌ BISI_COOKIE 内容为空或格式错误"
+        print(msg)
+        send("比思论坛签到", msg)
+        exit(1)
+
+    print(f"✅ 从 BISI_COOKIE 读取到 {len(cookies_list)} 个账号")
+    return cookies_list
+
+# ====================== 随机延迟 ======================
+random_signin = os.getenv("RANDOM_SIGNIN", "false").strip().lower() == "true"
+max_delay = int(os.getenv("MAX_RANDOM_DELAY", "3600").strip())
 
 if random_signin:
     delay_seconds = random.randint(1, max_delay)
-    print(f"✅ 已开启随机延迟，本次延迟 {delay_seconds} 秒")
-    # 倒计时显示（剩余多少分钟多少秒）
-    for remaining 在 range(delay_seconds, 0, -1):
-        minutes = remaining // 60
-        seconds = remaining % 60
-        print(f"\r⏳ 剩余 {minutes} 分 {seconds} 秒后开始签到..."， end="", flush=True)
-        time.sleep(1)
-    print("\r✅ 随机延迟结束，开始执行签到任务！          ")
+    minutes = delay_seconds // 60
+    seconds = delay_seconds % 60
+    print(f"⏳ 随机延迟: 等待 {minutes} 分钟 {seconds} 秒后开始执行...")
+    time.sleep(delay_seconds)
 else:
-    print("ℹ️ 随机延迟未开启，直接执行签到")
+    print("✅ 未开启随机延迟，直接执行签到")
 
-# ====================== 请求配置 ======================
+# ====================== 处理每个账号 ======================
+cookie_list = get_all_cookies()
+all_results = []
+
 base_headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     "Accept-Encoding": "gzip, deflate, sdch, br",
     "Connection": "keep-alive",
 }
 
-# ====================== Step 1: 获取 formhash ======================
-print("🔄 正在获取 formhash...")
-get_url = "http://hkcdnmesh.site/plugin.php?id=dsu_paulsign%3Asign"
+for idx, cookie in enumerate(cookie_list, 1):
+    print(f"\n📌 开始处理第 {idx}/{len(cookie_list)} 个账号")
 
-try:
-    resp_get = requests.get(
-        get_url,
-        headers={**base_headers, "Cookie": cookie}，
-        timeout=15，
-        allow_redirects=True,
-    )
-    resp_get.raise_for_status()
-except Exception as e:
-    print(f"❌ GET 请求失败: {e}")
-    exit(1)
+    try:
+        # Step 1: 获取 formhash
+        print("🔄 正在获取 formhash...")
+        get_url = "http://hkcdnmesh.site/plugin.php?id=dsu_paulsign%3Asign"
 
-# 提取 formhash
-formhash_match = re.search(r'formhash=(.+?)">', resp_get.text)
-if not formhash_match:
-    print("❌ 未在页面中找到 formhash，请检查 Cookie 是否有效")
-    exit(1)
+        resp_get = requests.get(
+            get_url,
+            headers={**base_headers, "Cookie": cookie},
+            timeout=15,
+            allow_redirects=True,
+        )
+        resp_get.raise_for_status()
 
-formhash = formhash_match.group(1).strip()
-print(f"✅ 获取到 formhash: {formhash}")
+        formhash_match = re.search(r'formhash=(.+?)">', resp_get.text)
+        if not formhash_match:
+            raise Exception("未找到 formhash，请检查 Cookie 是否有效")
 
-# ====================== Step 2: 提交签到 ======================
-print("🔄 正在提交签到请求...")
-post_url = "http://hkcdnmesh.site/plugin.php?id=dsu_paulsign%3Asign&operation=qiandao&infloat=1&sign_as=1&inajax=1"
+        formhash = formhash_match.group(1).strip()
+        print(f"✅ 获取到 formhash: {formhash}")
 
-post_data = {
-    "formhash": formhash,
-    "qdxq": "fd",
-}
+        # Step 2: 提交签到
+        print("🔄 正在提交签到请求...")
+        post_url = "http://hkcdnmesh.site/plugin.php?id=dsu_paulsign%3Asign&operation=qiandao&infloat=1&sign_as=1&inajax=1"
 
-post_headers = {
-    "Proxy-Connection": "keep-alive",
-    "Cache-Control": "max-age=0",
-    "Upgrade-Insecure-Requests": "1",
-    "Content-Type": "application/x-www-form-urlencoded",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-    "Accept-Encoding": "gzip, deflate",
-    "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Cookie": cookie,
-}
+        post_data = {
+            "formhash": formhash,
+            "qdxq": "fd",
+        }
 
-try:
-    resp_post = requests.post(
-        post_url,
-        headers=post_headers,
-        data=post_data,
-        timeout=15,
-    )
-    resp_text = resp_post.text
+        post_headers = {
+            "Proxy-Connection": "keep-alive",
+            "Cache-Control": "max-age=0",
+            "Upgrade-Insecure-Requests": "1",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cookie": cookie,
+        }
 
-    if "成功" in resp_text or "签到" in resp_text:
-        print("🎉 签到成功！")
-        # 尝试提取提示信息
-        tip_match = re.search(r'([\u4e00-\u9fa5]+签到成功[^<]*)', resp_text)
-        if tip_match:
-            print(f"📢 {tip_match.group(1)}")
+        resp_post = requests.post(
+            post_url,
+            headers=post_headers,
+            data=post_data,
+            timeout=15,
+        )
+        resp_text = resp_post.text
+
+        # ====================== 判断结果（仅匹配繁体字） ======================
+        if "成功" in resp_text or "签到成功" in resp_text or "恭喜" in resp_text:
+            sign_result = "✅ 签到成功"
+            tip_match = re.search(r'([\u4e00-\u9fa5]+签到成功[^<]*)', resp_text)
+            if tip_match:
+                sign_result += f" | {tip_match.group(1)}"
+        elif any(word in resp_text for word in [
+            "已經簽到",
+            "今日已經簽到",
+            "您今日已經簽到",
+            "簽到過了"
+        ]):
+            sign_result = "今日已签到"
         else:
-            print(f"📢 原始返回: {resp_text[:200]}...")
+            sign_result = "❌ 签到失败"
+
+        print(f"📢 签到结果: {sign_result}")
+        all_results.append(f"账号{idx}: {sign_result}")
+
+    except Exception as e:
+        error_msg = f"账号{idx} 执行异常: {str(e)}"
+        print(error_msg)
+        all_results.append(f"账号{idx}: 签到失败")
+
+# ====================== 最终通知 ======================
+if all_results:
+    summary = "\n".join(all_results)
+    has_action = any("签到成功" in r or "签到失败" in r for r in all_results)
+
+    if has_action:
+        send("比思论坛签到结果", f"【比思论坛多账号签到完成】\n\n{summary}\n\n时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print("🎉 多账号签到完成，通知已发送")
     else:
-        print("⚠️ 签到可能失败，请检查返回内容")
-        print(f"返回内容预览: {resp_text[:300]}...")
+        print("✅ 所有账号均已签到，无需发送通知")
 
-except Exception as e:
-    print(f"❌ POST 请求异常: {e}")
-
-print("【比思论坛签到】脚本执行完毕！")
+print("【比思论坛签到】多账号任务执行完毕")
