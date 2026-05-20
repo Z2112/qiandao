@@ -16,7 +16,7 @@
 #    1. 打开成都地铁APP
 #    2. 抓取签到接口：https://app.cdmetro.chengdurail.cn/platform/users/user/sign-in-integral
 #    3. 从 Headers 中提取：token、app-token、Cookie（device-id 可选）
-# 【通知逻辑】 今日已签到 → 仅打印日志，不通知；签到成功或失败 → 通过青龙通知系统推送
+# 【通知逻辑】 今日已签到（包括“请勿重复签到”等提示）→ 仅打印日志，不通知；签到成功或真正失败 → 通过青龙通知系统推送
 #
 # 【详细使用步骤】
 # 1. 青龙面板 → 依赖管理 → 新建 Python 依赖，安装以下依赖：
@@ -179,7 +179,7 @@ if not accounts:
     msg = "❌ CDRAIL_DATA 解析失败，请检查格式是否正确"
     print(msg)
     if send:
-        send("成都地铁签到"， msg)
+        send("成都地铁签到", msg)
     sys.exit(1)
 
 print(f"✅ 共检测到 {len(accounts)} 个账号，开始签到...")
@@ -208,24 +208,23 @@ for idx, acc in enumerate(accounts, 1):
         msg_text = data.get("msg") or data.get("message") or "无返回消息"
         integral = data.get("data", {}).get("integral", 0) or data.get("integral", 0)
 
-        # ==================== 判断签到结果 ====================
-        if code in [200, "200", 0, "0"] or "成功" in msg_text or "已签到" in msg_text:
-            if "已签到" in msg_text or "今日已签" in msg_text:
-                sign_result = "今日已签到"
-                notify_flag = False
-            else:
-                sign_result = f"✅ 签到成功，获得 {integral} 积分"
-                notify_flag = True
+        # ==================== 判断签到结果（严格按用户要求） ====================
+        already_signed_keywords = ["已签到", "今日已签", "请勿重复签到", "重复签到", "当天已经签到", "当日已签"]
+        is_already_signed = any(kw in msg_text for kw in already_signed_keywords)
+
+        if is_already_signed:
+            sign_result = "今日已签到"
+            notify_flag = False
+        elif code in [200, "200", 0, "0"] or "成功" in msg_text:
+            sign_result = f"✅ 签到成功，获得 {integral} 积分"
+            notify_flag = True
         else:
             sign_result = f"❌ 签到失败: {msg_text}"
             notify_flag = True
 
         print(f"📢 签到结果: {sign_result}")
 
-        # 可选：查询当前积分（原脚本未包含，可自行扩展）
-        # 这里只打印签到结果，保持简洁
-
-        # ==================== 发送通知（仅成功/失败） ====================
+        # ==================== 发送通知（仅成功/失败时通知） ====================
         if notify_flag and send:
             title = "✅ 成都地铁签到成功" if "签到成功" in sign_result else "❌ 成都地铁签到失败"
             body = f"账号: {masked_token}\n{sign_result}"
@@ -238,11 +237,11 @@ for idx, acc in enumerate(accounts, 1):
         error_msg = f"❌ 网络请求异常: {e}"
         print(error_msg)
         if send:
-            send("成都地铁签到"， f"账号 {masked_token} {error_msg}")
+            send("成都地铁签到", f"账号 {masked_token} {error_msg}")
     except Exception as e:
         error_msg = f"❌ 执行异常: {e}"
         print(error_msg)
         if send:
-            send("成都地铁签到"， f"账号 {masked_token} {error_msg}")
+            send("成都地铁签到", f"账号 {masked_token} {error_msg}")
 
 print("\n【成都地铁签到】全部账号执行完毕 ✅")
