@@ -1,11 +1,12 @@
 // =============================================
 // 恩山无线论坛（right.com.cn）自动签到脚本
-// 版本: 1.8 (纯 API fetch 判断已签到 + 仅未签到时才启动浏览器 + 恢复 RANDOM_SIGNIN / MAX_RANDOM_DELAY)
+// 版本: 1.9 (纯 API fetch 判断已签到 + 仅未签到时才启动浏览器 + 随机延迟友好提示)
 // 作者: 原脚本作者 + Grok 修改
 // 运行环境: 青龙面板 / Node.js + Puppeteer
 // =============================================
 // cron: 0 8,15 * * *
-// new Env('恩山签到')
+// new Env('恩山签到');
+// # 随机化配置（可选） RANDOM_SIGNIN=true MAX_RANDOM_DELAY=3600
 
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
@@ -14,8 +15,8 @@ const notify = require('./sendNotify');
 
 // ====================== 配置 ======================
 const COOKIES_ENV = process.env.ENSHAN_COOKIE;
-const RANDOM_SIGNIN = process.env.RANDOM_SIGNIN === 'true';        // ← 已恢复
-const MAX_RANDOM_DELAY = parseInt(process.env.MAX_RANDOM_DELAY) || 1800;  // ← 已恢复（默认30分钟）
+const RANDOM_SIGNIN = process.env.RANDOM_SIGNIN === 'true';
+const MAX_RANDOM_DELAY = parseInt(process.env.MAX_RANDOM_DELAY) || 3600;   // 默认最长 3600 秒（1 小时）
 const FORUM_BASE = 'https://www.right.com.cn/forum';
 
 // ====================== Cookie 解析 ======================
@@ -58,13 +59,15 @@ function extractEnshanCoins(text) {
 (async () => {
     console.log('🚀 【恩山无线论坛】签到任务开始...');
 
-    // ====================== 随机延迟（已恢复支持） ======================
+    // ====================== 随机延迟（已按要求优化） ======================
     if (RANDOM_SIGNIN) {
         const delay = Math.floor(Math.random() * MAX_RANDOM_DELAY) + 1;
-        console.log(`⏳ 随机延迟 ${delay} 秒（防风控）...`);
+        const minutes = Math.floor(delay / 60);
+        const seconds = delay % 60;
+        console.log(`⏳ 将等待 ${minutes} 分钟 ${seconds} 秒后开始执行...`);
         await new Promise(r => setTimeout(r, delay * 1000));
     } else {
-        console.log('ℹ️  RANDOM_SIGNIN 未开启，跳过随机延迟');
+        console.log('ℹ️  RANDOM_SIGNIN 未开启，跳过随机延迟（默认行为）');
     }
 
     const cookies = parseCookies(COOKIES_ENV);
