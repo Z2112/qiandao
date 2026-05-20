@@ -1,7 +1,7 @@
 // cron: 0 8,15 * * *
 // new Env('52pojie签到[大模型识别版]');
 // author: Jie + Grok 修改
-// version: 2.1 (多账号版)
+// version: 2.3 (多账号 + 简洁浏览器日志 + tokens显示)
 
 // =============================================
 // 【青龙面板使用说明】
@@ -29,13 +29,12 @@
 // 4. 注意事项：
 //    - 已签到的账号完全不发送任何通知
 //    - 只有签到成功 或 签到失败 时才会推送通知
-//    - 多账号时只会发送一条汇总通知
 // =============================================
 
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const axios = require('axios');
-const notify = require('./sendNotify');   // 青龙标准通知模块
+const notify = require('./sendNotify');
 
 const COOKIE_FILE = '/ql/data/scripts/cookies.json';
 
@@ -59,9 +58,10 @@ const LAUNCH_OPTIONS = {
   headless: true,
   executablePath: '/usr/bin/chromium',
   args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+  // 已移除 dumpio，避免大量 dbus 错误日志
 };
 
-// ==================== 获取所有 Cookie（支持 & 或换行分割） ====================
+// ==================== 获取所有 Cookie ====================
 function getAllCookies() {
   const raw = process.env.PJ52_COOKIES || '';
   if (!raw) {
@@ -93,11 +93,7 @@ async function loadCookies(page, cookieInput) {
     cookies = cookieInput.split(';').map(item => {
       const [name, ...valueParts] = item.trim().split('=');
       if (!name) return null;
-      return {
-        name: name.trim(),
-        value: valueParts.join('=').trim(),
-        domain: '.52pojie.cn'
-      };
+      return { name: name.trim(), value: valueParts.join('=').trim(), domain: '.52pojie.cn' };
     }).filter(Boolean);
   }
   if (cookies.length > 0) {
@@ -131,6 +127,13 @@ async function recognizeCaptcha(base64Image) {
     }, {
       headers: { Authorization: `Bearer ${LLM_API_KEY}` }
     });
+
+    // 大模型 tokens 消耗日志
+    if (res.data?.usage) {
+      const u = res.data.usage;
+      console.log(`🔥 大模型 tokens 消耗 → prompt:${u.prompt_tokens} | completion:${u.completion_tokens} | total:${u.total_tokens}`);
+    }
+
     return res.data.choices[0].message.content.trim();
   } catch (e) {
     console.log('大模型识别失败:', e.message);
@@ -172,6 +175,7 @@ async function doSign(page) {
 
 async function processAccount(cookieInput, accountIndex) {
   console.log(`\n📌 开始处理第 ${accountIndex} 个账号`);
+  console.log('🌐 浏览器已启动');
 
   let browser;
   let status = '';
@@ -199,7 +203,8 @@ async function processAccount(cookieInput, accountIndex) {
     console.error(result);
   } finally {
     if (browser) {
-      try { await browser.close(); } catch (e) {}
+      await browser.close();
+      console.log('🔚 浏览器已关闭');
     }
   }
 
@@ -219,10 +224,7 @@ async function main() {
   }
 
   const cookieList = getAllCookies();
-  if (cookieList.length === 0) {
-    console.error('没有可处理的 Cookie，任务结束');
-    return;
-  }
+  if (cookieList.length === 0) return;
 
   const allResults = [];
 
