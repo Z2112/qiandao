@@ -1,6 +1,6 @@
 // =============================================
 // 恩山无线论坛（right.com.cn）自动签到脚本
-// 版本: 1.9 (纯 API fetch 判断已签到 + 仅未签到时才启动浏览器 + 随机延迟友好提示)
+// 版本: 2.3 (仅使用 ENSHAN_COOKIE，支持 & 或换行符分割多账号)
 // 作者: 原脚本作者 + Grok 修改
 // 运行环境: 青龙面板 / Node.js + Puppeteer
 // =============================================
@@ -8,29 +8,63 @@
 // new Env('恩山签到');
 // # 随机化配置（可选） RANDOM_SIGNIN=true MAX_RANDOM_DELAY=3600
 
+/**
+ * 【青龙面板使用说明】
+ * 
+ * 1. 依赖安装（必须）：
+ *    - 青龙面板 → 依赖管理 → Node.js 依赖 → 新增
+ *    - 依赖名称：puppeteer-core
+ *    - 安装完成后重启青龙
+ * 
+ * 2. 环境变量设置：
+ *    - ENSHAN_COOKIE      （必填，支持多账号）单个环境变量，多个 Cookie 用 & 或 换行符 分割
+ *    - RANDOM_SIGNIN      （可选）true = 开启随机延迟
+ *    - MAX_RANDOM_DELAY   （可选）最大延迟秒数，默认3600秒
+ * 
+ * 3. 多账号配置示例（在青龙环境变量 ENSHAN_COOKIE 中填写）：
+ *    Cookie1字符串&Cookie2字符串&Cookie3字符串
+ *    或者每行一个 Cookie（青龙支持换行）：
+ *    Cookie1字符串
+ *    Cookie2字符串
+ *    Cookie3字符串
+ * 
+ * 4. 注意事项：
+ *    - 已签到的账号不会发送任何通知
+ *    - 只有签到成功或签到失败时才会推送通知
+ *    - 多账号时只会发送一条汇总通知
+ */
+
 const puppeteer = require('puppeteer-core');
-const fs = require('fs');
-const path = require('path');
 const notify = require('./sendNotify');
 
 // ====================== 配置 ======================
-const COOKIES_ENV = process.env.ENSHAN_COOKIE;
-const RANDOM_SIGNIN = process.env.RANDOM_SIGNIN === 'true';
-const MAX_RANDOM_DELAY = parseInt(process.env.MAX_RANDOM_DELAY) || 3600;   // 默认最长 3600 秒（1 小时）
 const FORUM_BASE = 'https://www.right.com.cn/forum';
+const RANDOM_SIGNIN = process.env.RANDOM_SIGNIN === 'true';
+const MAX_RANDOM_DELAY = parseInt(process.env.MAX_RANDOM_DELAY) || 3600;
+
+// ====================== 获取所有 Cookie（仅使用 ENSHAN_COOKIE，支持 & 和换行分割） ======================
+function getAllCookies() {
+    const raw = process.env.ENSHAN_COOKIE;
+    if (!raw) {
+        throw new Error('未找到 ENSHAN_COOKIE 环境变量，请设置该变量（支持 & 或换行分割多个 Cookie）');
+    }
+
+    // 支持 & 分割 和 换行符 分割，同时去除空白
+    const cookiesList = raw
+        .split(/&|\n|\r\n/)          // 支持 & 和 各种换行
+        .map(str => str.trim())
+        .filter(str => str.length > 10); // 过滤空字符串和明显无效的短字符串
+
+    if (cookiesList.length === 0) {
+        throw new Error('ENSHAN_COOKIE 内容为空或格式错误');
+    }
+
+    console.log(`✅ 从 ENSHAN_COOKIE 读取到 ${cookiesList.length} 个账号`);
+    return cookiesList;
+}
 
 // ====================== Cookie 解析 ======================
 function parseCookies(cookieInput) {
-    if (!cookieInput) throw new Error('ENSHAN_COOKIE 环境变量为空！');
-    try {
-        const parsed = JSON.parse(cookieInput);
-        if (Array.isArray(parsed)) {
-            console.log('✅ 已成功解析 JSON 格式 Cookie');
-            return parsed;
-        }
-    } catch (e) {
-        console.log('ℹ️  非 JSON 格式，尝试解析字符串 Cookie...');
-    }
     const cookies = cookieInput.split(';').map(cookie => {
         const [name, ...valueParts] = cookie.trim().split('=');
         if (!name) return null;
@@ -40,7 +74,7 @@ function parseCookies(cookieInput) {
             domain: '.right.com.cn'
         };
     }).filter(Boolean);
-    console.log(`✅ 已解析 ${cookies.length} 个 Cookie`);
+
     return cookies;
 }
 
@@ -57,9 +91,11 @@ function extractEnshanCoins(text) {
 
 // ====================== 主函数 ======================
 (async () => {
-    console.log('🚀 【恩山无线论坛】签到任务开始...');
+    console.log('🚀 【恩山无线论坛】多账号签到任务开始...');
 
-    // ====================== 随机延迟（已按要求优化） ======================
+    let allResults = [];
+
+    // ====================== 随机延迟 ======================
     if (RANDOM_SIGNIN) {
         const delay = Math.floor(Math.random() * MAX_RANDOM_DELAY) + 1;
         const minutes = Math.floor(delay / 60);
@@ -70,112 +106,113 @@ function extractEnshanCoins(text) {
         console.log('ℹ️  RANDOM_SIGNIN 未开启，跳过随机延迟（默认行为）');
     }
 
-    const cookies = parseCookies(COOKIES_ENV);
-    const scriptDir = __dirname;
-    console.log(`📂 脚本运行目录: ${scriptDir}`);
+    const cookieStrings = getAllCookies();
 
-    // ====================== 【纯 API 判断】签到前状态检查 ======================
-    console.log('🔍 【纯 API 判断】正在访问签到页面检查是否已签到...');
-    
-    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+    for (let i = 0; i < cookieStrings.length; i++) {
+        const cookieStr = cookieStrings[i];
+        console.log(`\n📌 开始处理第 ${i+1}/${cookieStrings.length} 个账号`);
 
-    const checkResponse = await fetch(`${FORUM_BASE}/erling_qd-sign_in.html`, {
-        headers: {
-            "cache-control": "max-age=0",
-            "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Google Chrome\";v=\"150\"",
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": "\"Windows\"",
-            "upgrade-insecure-requests": "1",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "sec-fetch-site": "same-origin",
-            "sec-fetch-mode": "navigate",
-            "sec-fetch-user": "?1",
-            "sec-fetch-dest": "document",
-            "referer": "https://www.right.com.cn/forum/forum-169-1.html",
-            "accept-encoding": "gzip, deflate, br, zstd",
-            "accept-language": "zh-CN,zh;q=0.9",
-            "priority": "u=0, i",
-            "cookie": cookieStr
-        },
-        method: "GET"
-    });
+        const cookies = parseCookies(cookieStr);
 
-    const checkText = await checkResponse.text();
+        // ====================== 纯 API 判断是否已签到 ======================
+        console.log('🔍 【纯 API 判断】检查签到状态...');
+        const checkCookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
 
-    if (checkText.includes('disabled>已签到</button>') || checkText.includes('已签到</button>')) {
-        console.log('✅ 【纯 API 判断】已检测到【已签到】状态，直接结束任务（未启动浏览器）');
-        const msg = `【恩山无线论坛】今日已签到\n无需重复签到\n时间: ${new Date().toLocaleString('zh-CN')}`;
-        await notify.sendNotify('恩山无线论坛签到', msg);
-        return;
-    } else {
-        console.log('🔄 【纯 API 判断】未签到，继续执行签到流程...');
-    }
+        try {
+            const checkResponse = await fetch(`${FORUM_BASE}/erling_qd-sign_in.html`, {
+                headers: {
+                    "cache-control": "max-age=0",
+                    "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Google Chrome\";v=\"150\"",
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": "\"Windows\"",
+                    "upgrade-insecure-requests": "1",
+                    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                    "sec-fetch-site": "same-origin",
+                    "sec-fetch-mode": "navigate",
+                    "sec-fetch-user": "?1",
+                    "sec-fetch-dest": "document",
+                    "referer": "https://www.right.com.cn/forum/forum-169-1.html",
+                    "accept-encoding": "gzip, deflate, br, zstd",
+                    "accept-language": "zh-CN,zh;q=0.9",
+                    "priority": "u=0, i",
+                    "cookie": checkCookieStr
+                },
+                method: "GET"
+            });
 
-    // ====================== 仅未签到时才启动浏览器 ======================
-    let browser;
-    try {
-        console.log('🌐 启动浏览器并注入 Cookie...');
-        browser = await puppeteer.launch({
-            executablePath: '/usr/bin/chromium-browser',
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu']
-        });
+            const checkText = await checkResponse.text();
 
-        const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36');
-        await page.setCookie(...cookies);
-
-        // ====================== 步骤1：签到前获取恩山币 ======================
-        console.log('📊 【步骤1】正在获取签到前恩山币...');
-        await page.goto(`${FORUM_BASE}/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu`, { waitUntil: 'networkidle2' });
-
-        const beforeText = await page.evaluate(() => document.body.innerText || '');
-        const beforeCoins = extractEnshanCoins(beforeText);
-        console.log(`💰 【签到前】恩山币数量: ${beforeCoins} 币`);
-
-        // ====================== 步骤2：执行签到 ======================
-        console.log('🔄 【步骤2】正在前往签到页面并点击签到...');
-        await page.goto(`${FORUM_BASE}/erling_qd-sign_in.html`, { waitUntil: 'networkidle2' });
-
-        const signed = await page.evaluate(() => {
-            const btn = document.getElementById('signin-btn');
-            if (btn) {
-                btn.click();
-                return true;
+            if (checkText.includes('disabled>已签到</button>') || checkText.includes('已签到</button>')) {
+                console.log('✅ 该账号今日已签到（不发送通知）');
+                allResults.push(`账号${i+1}: 已签到`);
+                continue;
             }
-            return false;
-        });
 
-        if (!signed) throw new Error('❌ 未找到签到按钮（#signin-btn）');
+            console.log('🔄 该账号未签到，开始执行签到...');
 
-        console.log('✅ 已成功点击签到按钮，等待签到结果...');
-        await new Promise(resolve => setTimeout(resolve, 4000));
+            // ====================== 未签到 → 启动浏览器执行签到 ======================
+            let browser = await puppeteer.launch({
+                executablePath: '/usr/bin/chromium-browser',
+                headless: true,
+                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu']
+            });
 
-        // ====================== 步骤3：签到后获取恩山币 ======================
-        console.log('📊 【步骤3】正在获取签到后恩山币...');
-        await page.goto(`${FORUM_BASE}/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu`, { waitUntil: 'networkidle2' });
+            const page = await browser.newPage();
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36');
+            await page.setCookie(...cookies);
 
-        const afterText = await page.evaluate(() => document.body.innerText || '');
-        
-        const afterFile = path.join(scriptDir, 'enshan_credit_after.txt');
-        fs.writeFileSync(afterFile, afterText, 'utf8');
-        console.log(`📄 签到后原始文本已保存 → ${afterFile}`);
+            // 签到前恩山币
+            await page.goto(`${FORUM_BASE}/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu`, { waitUntil: 'networkidle2' });
+            const beforeText = await page.evaluate(() => document.body.innerText || '');
+            const beforeCoins = extractEnshanCoins(beforeText);
 
-        const afterCoins = extractEnshanCoins(afterText);
-        const increase = afterCoins - beforeCoins;
-        console.log(`💰 【签到后】恩山币数量: ${afterCoins} 币（本次增加 ${increase} 币）`);
+            // 执行签到
+            await page.goto(`${FORUM_BASE}/erling_qd-sign_in.html`, { waitUntil: 'networkidle2' });
+            const signed = await page.evaluate(() => {
+                const btn = document.getElementById('signin-btn');
+                if (btn) {
+                    btn.click();
+                    return true;
+                }
+                return false;
+            });
 
-        // ====================== 通知 ======================
-        const msg = `【恩山无线论坛签到成功】\n\n签到前: ${beforeCoins} 币\n签到后: ${afterCoins} 币\n本次增加: ${increase} 币\n时间: ${new Date().toLocaleString('zh-CN')}`;
-        await notify.sendNotify('恩山无线论坛签到', msg);
-        console.log('🎉 签到任务全部完成！通知已发送');
+            if (!signed) throw new Error('未找到签到按钮（#signin-btn）');
 
-    } catch (err) {
-        console.error('❌ 签到失败:', err.message);
-        await notify.sendNotify('恩山无线论坛签到', `❌ 签到失败\n原因: ${err.message}`);
-    } finally {
-        if (browser) await browser.close();
-        console.log('🔚 浏览器已关闭，任务结束');
+            console.log('✅ 已点击签到按钮，等待结果...');
+            await new Promise(resolve => setTimeout(resolve, 4000));
+
+            // 签到后恩山币
+            await page.goto(`${FORUM_BASE}/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu`, { waitUntil: 'networkidle2' });
+            const afterText = await page.evaluate(() => document.body.innerText || '');
+            const afterCoins = extractEnshanCoins(afterText);
+            const increase = afterCoins - beforeCoins;
+
+            console.log(`💰 签到成功！本次增加 ${increase} 币`);
+
+            allResults.push(`账号${i+1}: 签到成功（+${increase}币）`);
+
+            await browser.close();
+
+        } catch (err) {
+            console.error(`❌ 账号${i+1} 签到失败:`, err.message);
+            allResults.push(`账号${i+1}: 签到失败`);
+        }
     }
+
+    // ====================== 最终通知（仅在有成功或失败时发送） ======================
+    if (allResults.length > 0) {
+        const summary = allResults.join('\n');
+        const hasAction = allResults.some(r => r.includes('签到成功') || r.includes('签到失败'));
+
+        if (hasAction) {
+            await notify.sendNotify('恩山无线论坛签到结果', `【恩山多账号签到完成】\n\n${summary}\n\n时间: ${new Date().toLocaleString('zh-CN')}`);
+            console.log('🎉 多账号签到完成，通知已发送');
+        } else {
+            console.log('✅ 所有账号均已签到，无需发送通知');
+        }
+    }
+
+    console.log('🔚 全部任务执行完毕');
 })();
