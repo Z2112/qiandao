@@ -1,7 +1,7 @@
 // cron: 0 8,15 * * *
 // new Env('52pojie签到[大模型识别版]');
 // author: Jie
-// version: 1.1
+// version: 1.2
 
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
@@ -13,6 +13,16 @@ const COOKIE_FILE = '/ql/data/scripts/cookies.json';
 const LLM_API_URL = process.env.LLM_API_URL || '';
 const LLM_API_KEY = process.env.LLM_API_KEY || '';
 const LLM_MODEL = process.env.LLM_MODEL || 'gpt-4o';
+
+// ==================== 时间格式化函数 ====================
+function formatDelay(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (minutes > 0) {
+    return `${minutes}分钟${secs}秒`;
+  }
+  return `${secs}秒`;
+}
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -104,12 +114,14 @@ async function doSign(page) {
 async function main() {
   console.log('=== 52pojie 签到开始（大模型版）===');
 
-  // ==================== 随机延迟配置 ====================
+  // ==================== 随机延迟配置（按你的要求修改） ====================
   if (process.env.RANDOM_SIGNIN === 'true') {
-    const maxDelay = parseInt(process.env.MAX_RANDOM_DELAY) || 1800;
+    const maxDelay = parseInt(process.env.MAX_RANDOM_DELAY) || 3600; // 默认最大3600秒
     const randomDelay = Math.floor(Math.random() * maxDelay) + 1;
-    console.log(`随机延迟 ${randomDelay} 秒后执行...`);
+    console.log(`随机延迟 ${formatDelay(randomDelay)} 后开始执行...`);
     await delay(randomDelay * 1000);
+  } else {
+    console.log('未开启随机延迟（RANDOM_SIGNIN 未设置为 true）');
   }
 
   let browser;
