@@ -56,7 +56,7 @@ def get_all_cookies():
     # 支持 & 分割 和 换行符分割
     cookies_list = raw.split('&')
     cookies_list = [c.strip() for line in cookies_list for c in line.split('\n') if c.strip()]
-    cookies_list = [c for c in cookies_list if len(c) > 20]  # 过滤无效短字符串
+    cookies_list = [c for c in cookies_list if len(c) > 20]
 
     if not cookies_list:
         msg = "❌ IJINGYI_COOKIE 内容为空或格式错误"
@@ -190,39 +190,27 @@ for idx, cookie in enumerate(cookie_list, 1):
         # 记录结果
         all_results.append(f"账号{idx}: {sign_result} | {points_msg}")
 
-        # ==================== 发送通知（仅成功/失败时） ====================
-        if notify_flag and send:
-            if "签到成功" in sign_result:
-                title = "✅ 精易论坛签到成功"
-                body = f"{sign_result}\n\n{points_msg}"
-            else:
-                title = "❌ 精易论坛签到失败"
-                body = f"{sign_result}\n\n{points_msg}\n\n响应预览：{content[:300]}"
-            send(title, body)
-            print("📨 已通过青龙通知系统发送结果")
-        elif not notify_flag:
+        if not notify_flag:
             print("ℹ️ 今日已签到，无需通知")
 
     except requests.exceptions.RequestException as e:
         error_msg = f"❌ 账号{idx} 网络请求异常: {str(e)}"
         print(error_msg)
-        all_results.append(f"账号{idx}: 签到失败")
-        if send:
-            send("精易论坛签到", error_msg)
+        all_results.append(f"账号{idx}: 签到失败（网络异常）")
     except Exception as e:
         error_msg = f"❌ 账号{idx} 执行异常: {str(e)}"
         print(error_msg)
-        all_results.append(f"账号{idx}: 签到失败")
-        if send:
-            send("精易论坛签到", error_msg)
+        all_results.append(f"账号{idx}: 签到失败（执行异常）")
 
-# ==================== 最终汇总通知 ====================
+# ==================== 最终汇总通知（只发送一次） ====================
 if all_results:
     summary = "\n".join(all_results)
     has_action = any("签到成功" in r or "签到失败" in r for r in all_results)
+
     if has_action and send:
-        send("精易论坛签到结果", f"【精易论坛多账号签到完成】\n\n{summary}\n\n时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print("🎉 多账号签到完成，通知已发送")
+        send("精易论坛签到结果", 
+             f"【精易论坛多账号签到完成】\n\n{summary}\n\n时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print("🎉 多账号签到完成，通知已发送（仅一次）")
     else:
         print("✅ 所有账号均已签到，无需发送通知")
 
