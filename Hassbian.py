@@ -118,12 +118,6 @@ def main():
                 timeout=20
             )
 
-            # ====================== 保存签到API返回文本 ======================
-            sign_file = os.path.join(script_dir, f"hassbian_sign_response_账号{idx}.txt")
-            with open(sign_file, 'w', encoding='utf-8') as f:
-                f.write(r_sign.text)
-            print(f"📄 签到API返回文本已保存 → {sign_file}")
-
             # 签到后获取积分
             print("📊 签到后再次获取积分...")
             new_money = None
@@ -140,22 +134,56 @@ def main():
 
             # 判断结果
             if old_money and new_money and old_money != new_money:
-                result = f"✅ 签到成功！积分变化: {old_money} → {new_money}"
+                try:
+                    old_val = int(str(old_money).replace(',', '').replace(' ', '').strip())
+                    new_val = int(str(new_money).replace(',', '').replace(' ', '').strip())
+                    diff = new_val - old_val
+                    if diff > 0:
+                        result = f"✅ 签到成功！登录金钱+{diff}，当前金钱{new_val}"
+                    else:
+                        result = f"✅ 签到成功！当前金钱{new_val}"
+                except:
+                    result = f"✅ 签到成功！当前金钱{new_money}"
             else:
                 result = "今日已签到（积分未变化）"
 
             print(result)
-            all_results.append(f"账号{idx}: {result}")
+            all_results.append({
+                "account": idx,
+                "result": result,
+                "action_type": "success" if (old_money and new_money and old_money != new_money) else "already"
+            })
 
         except Exception as e:
             error_msg = f"账号{idx} 执行异常: {str(e)}"
             print(error_msg)
-            all_results.append(f"账号{idx}: 签到失败")
+            all_results.append({
+                "account": idx,
+                "result": f"❌ 签到失败: {str(e)}",
+                "action_type": "failed"
+            })
 
+    # ==================== 通知逻辑 ====================
     if all_results:
-        summary = "\n".join(all_results)
         print("\n=== ✅ Hassbian签到任务全部执行完毕 ===")
-        print(summary)
+
+        summary_lines = []
+        has_action = False
+        for item in all_results:
+            summary_lines.append(f"账号{item['account']}: {item['result']}")
+            if item.get('action_type') in ["success", "failed"]:
+                has_action = True
+
+        summary_text = "\n".join(summary_lines)
+        print(summary_text)
+
+        if has_action and send:
+            notify_title = "Hassbian签到结果"
+            notify_body = f"【Hassbian论坛多账号签到完成】\n\n{summary_text}\n\n时间: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+            send(notify_title, notify_body)
+            print("📨 已发送通知")
+        else:
+            print("ℹ️ 所有账号今日已签到，无需发送通知")
 
 if __name__ == "__main__":
     main()
