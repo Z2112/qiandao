@@ -111,6 +111,26 @@ async function getSignStatus(page) {
   return '未知状态';
 }
 
+async function getMyCredits(page) {
+  try {
+    await page.goto('https://www.52pojie.cn/home.php?mod=spacecp&ac=credit&showcredit=1', {
+      waitUntil: 'networkidle2',
+      timeout: 20000
+    });
+    await delay(2000);
+    const html = await page.content();
+
+    // 常见吾爱币显示（根据 Discuz 模板调整）
+    const match = html.match(/吾爱币.*?([0-9,]+)/i) || html.match(/积分.*?([0-9,]+)/i);
+    if (match) {
+      return match[1].replace(/,/g, '');
+    }
+  } catch (e) {
+    console.log('获取吾爱币失败:', e.message);
+  }
+  return null;
+}
+
 async function recognizeCaptcha(base64Image) {
   if (!LLM_API_URL || !LLM_API_KEY) return null;
   try {
@@ -141,7 +161,7 @@ async function recognizeCaptcha(base64Image) {
   }
 }
 
-async function doSign(page) {
+async function doSign(page, oldCredits) {
   console.log('访问签到任务页...');
   await page.goto('https://www.52pojie.cn/home.php?mod=task&do=apply&id=2', {
     waitUntil: 'networkidle2',
@@ -149,7 +169,7 @@ async function doSign(page) {
   });
   await delay(5000);
 
-  const html = await page.content();
+  let html = await page.content();
   const isVerifyPage = html.includes('IP:') || html.includes('type="text"');
 
   if (isVerifyPage) {
@@ -164,13 +184,29 @@ async function doSign(page) {
         await delay(800);
         const submit = await page.$('button, input[type="submit"]');
         if (submit) await submit.click();
-        await delay(6000);
+        await delay(8000);
+
+        // 提交后检查是否成功
+        html = await page.content();
+        if (html.includes('签到成功') || html.includes('获得') || html.includes('任务已完成')) {
+          return { status: 'success', message: '签到成功' };
+        } else if (html.includes('验证码') || html.includes('错误') || html.includes('失败')) {
+          return { status: 'fail', message: '签到失败（验证码错误）' };
+        }
       } else {
         console.log('验证码识别失败');
+        return { status: 'fail', message: '验证码识别失败' };
       }
     }
   }
-  return await getSignStatus(page);
+
+  // 没有验证码或提交后回到首页，检查最终状态
+  const finalStatus = await getSignStatus(page);
+  if (finalStatus === '已签到') {
+    return { status: 'success', message: '签到成功' };
+  } else {
+    return { status: 'fail', message: '签到失败' };
+  }
 }
 
 async function processAccount(cookieInput, accountIndex) {
@@ -178,8 +214,7 @@ async function processAccount(cookieInput, accountIndex) {
   console.log('🌐 浏览器已启动');
 
   let browser;
-  let status = '';
-  let result = '';
+  let finalResult = '';
 
   try {
     browser = await puppeteer.launch(LAUNCH_OPTIONS);
@@ -188,19 +223,41 @@ async function processAccount(cookieInput, accountIndex) {
 
     await loadCookies(page, cookieInput);
 
-    status = await getSignStatus(page);
-    console.log('当前状态:', status);
+    const initialStatus = await getSignStatus(page);
+    console.log('当前状态:', initialStatus);
 
-    if (status === '未签到') {
-      result = await doSign(page);
-      console.log('签到后状态:', result);
+    if (initialStatus === '未签到') {
+      // 获取签到前吾爱币
+      const oldCredits = await getMyCredits(page);
+      console.log(`签到前吾爱币: ${oldCredits || '未知'}`);
+
+      const signResult = await doSign(page, oldCredits);
+
+      if (signResult.status === 'success') {
+        // 签到成功后获取最新吾爱币
+        await delay(3000);
+        const newCredits = await getMyCredits(page);
+        console.log(`签到后吾爱币: ${newCredits || '未知'}`);
+
+        let rewardText = '';
+        if (oldCredits && newCredits) {
+          const diff = parseInt(newCredits) - parseInt(oldCredits);
+          if (diff > 0) {
+            rewardText = `，获得 ${diff} 吾爱币`;
+          }
+        }
+
+        finalResult = `✅ 签到成功${rewardText}，当前总共 ${newCredits || '未知'} 吾爱币`;
+      } else {
+        finalResult = `❌ ${signResult.message}`;
+      }
     } else {
-      result = '今日已签到';
+      finalResult = '今日已签到';
     }
 
   } catch (err) {
-    result = '执行异常: ' + err.message;
-    console.error(result);
+    finalResult = '执行异常: ' + err.message;
+    console.error(finalResult);
   } finally {
     if (browser) {
       await browser.close();
@@ -208,7 +265,7 @@ async function processAccount(cookieInput, accountIndex) {
     }
   }
 
-  return { status, result };
+  return finalResult;
 }
 
 async function main() {
@@ -229,7 +286,7 @@ async function main() {
   const allResults = [];
 
   for (let i = 0; i < cookieList.length; i++) {
-    const { status, result } = await processAccount(cookieList[i], i + 1);
+    const result = await processAccount(cookieList[i], i + 1);
     allResults.push(`账号${i + 1}: ${result}`);
   }
 
