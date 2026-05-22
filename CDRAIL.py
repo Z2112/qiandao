@@ -1,42 +1,44 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-# ==================== 青龙面板使用说明（成都地铁签到） ====================
+================================================================================
+青龙面板 - 成都地铁签到脚本
+================================================================================
 
-# 【脚本名称】 成都地铁签到（支持多账号 + 签到 + 积分查询）
-# 【cron 定时】 每天 9:00 执行（可自行修改为其他时间）
-# 【环境变量】
-#    CDRAIL_DATA  → 账号数据（必填，支持多账号）
-#       • JSON 格式：{"token":"xxx","app-token":"xxx","Cookie":"xxx"}
-#       • querystring 格式：token=xxx&app-token=xxx&cookie=xxx
-#       • 多账号支持：用换行 或 @ 分割
-# 【可选变量】
-#    RANDOM_SIGNIN      → true 开启随机延迟（默认 false）
-#    MAX_RANDOM_DELAY   → 最大随机延迟秒数（默认 3600 秒 = 1小时）
-#    PRIVACY_MODE       → true 开启隐私模式（默认 true，账号信息打码）
-# 【抓包说明】
-#    1. 打开成都地铁APP
-#    2. 抓取签到接口：https://app.cdmetro.chengdurail.cn/platform/users/user/sign-in-integral
-#    3. 从 Headers 中提取：token、app-token、Cookie（device-id 可选）
-# 【通知逻辑】 今日已签到（包括“请勿重复签到”等提示）→ 仅打印日志，不通知；签到成功或真正失败 → 通过青龙通知系统推送
-#
-# 【详细使用步骤】
-# 1. 青龙面板 → 依赖管理 → 新建 Python 依赖，安装以下依赖：
-#       requests
-# 2. 青龙面板 → 环境变量 → 新建变量 CDRAIL_DATA，填入抓包数据（支持多账号）
-# 3. 青龙面板 → 定时任务 → 新建任务，脚本路径指向本文件
-# 4. 保存后点击“立即执行”测试，查看日志是否正常
-#
-# 【注意事项】
-# • 建议开启 PRIVACY_MODE 保护隐私
-# • 账号数据请妥善保管，不要泄露
-# • 如签到失败可尝试重新抓包更新 token/app-token
-#
-# 作者：Grok（根据用户提供的 CDRail.py 完全重构优化）
-# 优化日期：2026-05-20
-# 原脚本来源：https://github.com/agluo/ql-script-hub/blob/master/CDRail.py
+【环境变量配置】
+
+1. CDRAIL_DATA (必填)
+   - 账号数据，支持多种格式：
+     • JSON格式: {"token":"xxx","app-token":"yyy","Cookie":"zzz"}
+     • querystring格式: token=xxx&app-token=yyy&Cookie=zzz
+     • 多账号支持：使用换行 或 @ 分隔多个账号
+
+2. RANDOM_SIGNIN (可选)
+   - true  = 开启随机延迟
+   - false = 关闭随机延迟（默认）
+
+3. MAX_RANDOM_DELAY (可选)
+   - 随机延迟最大秒数，默认 3600 秒（1小时）
+
+【依赖安装】
+
+青龙面板 → 依赖管理 → Python3 → 安装 requests
+
+【使用步骤】
+
+1. 抓包获取 token、app-token、Cookie（推荐从签到接口请求头中提取）
+2. 在青龙面板添加环境变量 CDRAIL_DATA
+3. （可选）添加 RANDOM_SIGNIN=true 开启随机延迟
+4. 添加定时任务，推荐 cron: 0 9 * * *
+5. 通知规则：只有「签到成功」或「签到失败」时才推送通知，已签到不通知
+
+【通知规则】
+- 仅当账号签到成功 或 签到失败 时发送通知
+- 今日已签到 → 不发送通知
+- 多账号时只发送一条汇总通知
+
+================================================================================
 """
-
-# cron: 0 9 * * *
-# new Env('成都地铁签到')
 
 import os
 import re
@@ -47,46 +49,29 @@ import random
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from datetime import datetime, timedelta
 
-# ==================== 通知模块 ====================
+# ---------------- 统一通知模块加载 ----------------
+hadsend = False
+send = None
 try:
     from notify import send
+    hadsend = True
 except ImportError:
-    send = None
+    print("⚠️  未加载通知模块，跳过通知功能")
 
-print("【成都地铁签到】开始执行...")
+# ---------------- 基础配置 ----------------
+SCRIPT_NAME = "成都地铁签到"
+ENV_NAME = "CDRAIL_DATA"
 
-# ==================== 获取环境变量 ====================
-CDRAIL_DATA = os.getenv('CDRAIL_DATA')
-if not CDRAIL_DATA:
-    msg = "❌ 未设置 CDRAIL_DATA 环境变量，请检查青龙面板变量配置"
-    print(msg)
-    if send:
-        send("成都地铁签到", msg)
-    sys.exit(1)
+timeout = int(os.getenv("TIMEOUT", "15"))
+max_retries = int(os.getenv("MAX_RETRIES", "3"))
 
-# ==================== 随机延迟（可选） ====================
-random_signin = os.getenv('RANDOM_SIGNIN', 'false').lower() == 'true'
-max_random_delay = os.getenv('MAX_RANDOM_DELAY')
+# 随机延迟（默认关闭）
+max_random_delay = int(os.getenv("MAX_RANDOM_DELAY", "3600"))
+random_signin = os.getenv("RANDOM_SIGNIN", "false").lower() == "true"
 
-if random_signin:
-    try:
-        max_d = int(max_random_delay) if max_random_delay else 3600
-        if max_d > 0:
-            delay_sec = random.randint(1, max_d)
-            minutes = delay_sec // 60
-            seconds = delay_sec % 60
-            print(f"⏳ 随机延迟: 等待 {minutes} 分钟 {seconds} 秒后开始执行")
-            time.sleep(delay_sec)
-    except Exception as e:
-        print(f"⚠️ 随机延迟处理异常（将继续执行）: {e}")
-else:
-    print("✅ 未开启随机延迟（RANDOM_SIGNIN 未设置为 true）")
-
-# ==================== 配置参数 ====================
-PRIVACY_MODE = os.getenv('PRIVACY_MODE', 'true').lower() == 'true'
-TIMEOUT = int(os.getenv('TIMEOUT', '15'))
-MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
+privacy_mode = os.getenv("PRIVACY_MODE", "true").lower() == "true"
 
 DEFAULT_HEADERS = {
     "system-version": "16.4.1",
@@ -106,34 +91,84 @@ DEFAULT_HEADERS = {
     "user": "external",
 }
 
-def mask_text(text: str, head: int = 6, tail: int = 6) -> str:
-    """隐私保护：打码显示账号关键信息"""
-    if not PRIVACY_MODE or not text or len(text) <= head + tail:
-        return text or ""
+
+def push(contents: str):
+    if hadsend:
+        try:
+            send(SCRIPT_NAME, contents)
+            print("✅ notify.py推送成功")
+        except Exception as e:
+            print(f"❌ notify.py推送失败: {e}")
+    else:
+        print(f"📢 {SCRIPT_NAME}\n{contents}")
+
+
+def mask_text(text: str, head: int = 4, tail: int = 4) -> str:
+    if not privacy_mode or not text:
+        return text
+    if len(text) <= head + tail:
+        return "*" * len(text)
     return text[:head] + "*" * (len(text) - head - tail) + text[-tail:]
 
+
+def format_time_remaining(seconds: int) -> str:
+    if seconds <= 0:
+        return "立即执行"
+    hours, minutes = divmod(seconds, 3600)
+    minutes, secs = divmod(minutes, 60)
+    if hours > 0:
+        return f"{hours}小时{minutes}分{secs}秒"
+    if minutes > 0:
+        return f"{minutes}分{secs}秒"
+    return f"{secs}秒"
+
+
+def wait_with_countdown(delay_seconds: int):
+    if delay_seconds <= 0:
+        return
+    remaining = delay_seconds
+    while remaining > 0:
+        if remaining <= 10 or remaining % 10 == 0:
+            print(f"倒计时: {format_time_remaining(remaining)}")
+        sleep_time = 1 if remaining <= 10 else min(10, remaining)
+        time.sleep(sleep_time)
+        remaining -= sleep_time
+
+
+def build_session() -> requests.Session:
+    session = requests.Session()
+    retries = Retry(
+        total=max_retries,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["GET", "POST"],
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
 def parse_accounts(env_value: str):
-    """解析 CDRAIL_DATA，支持 JSON / querystring / 多账号"""
     if not env_value:
         return []
+
     env_value = env_value.strip()
 
-    # 单个完整 JSON
+    # 单个 JSON（不按分隔符拆）
     try:
         if env_value.startswith("{") and env_value.endswith("}"):
             return [json.loads(env_value)]
-    except:
+    except json.JSONDecodeError:
         pass
 
     accounts = []
-    # 支持换行或 @ 分割多账号
-    raw_list = [x.strip() for x in re.split(r'[\n@]', env_value) if x.strip()]
+    raw_list = [x.strip() for x in re.split(r"[\n@]", env_value) if x.strip()]
     for raw in raw_list:
         try:
             if raw.startswith("{") and raw.endswith("}"):
                 accounts.append(json.loads(raw))
                 continue
-            # querystring 格式
             data = {}
             for part in raw.split("&"):
                 if "=" not in part:
@@ -143,22 +178,18 @@ def parse_accounts(env_value: str):
             if data:
                 accounts.append(data)
         except Exception as e:
-            print(f"❌ 账号解析失败: {raw[:30]}... {e}")
+            print(f"❌ 账号解析失败: {raw[:20]}... {e}")
     return accounts
 
-def build_session():
-    session = requests.Session()
-    retries = Retry(total=MAX_RETRIES, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-    adapter = HTTPAdapter(max_retries=retries)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    return session
 
-def build_headers(account: dict):
+def build_headers(account_data: dict) -> dict:
     headers = DEFAULT_HEADERS.copy()
-    for k, v in (account or {}).items():
+
+    # 允许用户传入完整 headers；同时兼容 cookie/token/app-token 等关键字段写法
+    for k, v in (account_data or {}).items():
         if v is None:
             continue
+        headers[k] = v
         lk = str(k).lower()
         if lk == "cookie":
             headers["Cookie"] = v
@@ -167,81 +198,107 @@ def build_headers(account: dict):
         elif lk in ("app-token", "apptoken", "app_token"):
             headers["app-token"] = v
         elif lk in ("deviceid", "device-id", "device_id"):
+            # 默认 headers 同时存在 deviceId / device-id，通常两者需保持一致
             headers["deviceId"] = v
             headers["device-id"] = v
-        else:
-            headers[k] = v
+
     return headers
 
-# ==================== 主流程 ====================
-accounts = parse_accounts(CDRAIL_DATA)
-if not accounts:
-    msg = "❌ CDRAIL_DATA 解析失败，请检查格式是否正确"
-    print(msg)
-    if send:
-        send("成都地铁签到", msg)
-    sys.exit(1)
 
-print(f"✅ 共检测到 {len(accounts)} 个账号，开始签到...")
+def cdrail_signin(session: requests.Session, headers: dict):
+    if not headers.get("token") or not headers.get("app-token"):
+        missing = []
+        if not headers.get("token"):
+            missing.append("token")
+        if not headers.get("app-token"):
+            missing.append("app-token")
+        return "invalid", f"缺少字段: {', '.join(missing)}"
 
-for idx, acc in enumerate(accounts, 1):
-    print(f"\n📌 第 {idx}/{len(accounts)} 个账号")
-    token = acc.get("token") or acc.get("Token")
-    app_token = acc.get("app-token") or acc.get("appToken") or acc.get("App-Token")
-    masked_token = mask_text(token or "")
-
-    if not token or not app_token:
-        print(f"❌ 账号 {masked_token} 缺少 token 或 app-token，跳过")
-        continue
-
-    session = build_session()
-    headers = build_headers(acc)
-
+    url = "https://app.cdmetro.chengdurail.cn/platform/users/user/sign-in-integral"
     try:
-        # 执行签到
-        sign_url = "https://app.cdmetro.chengdurail.cn/platform/users/user/sign-in-integral"
-        resp = session.get(sign_url, headers=headers, timeout=TIMEOUT)
+        resp = session.get(url, headers=headers, timeout=timeout)
         resp.raise_for_status()
         data = resp.json()
-
-        code = data.get("code")
-        msg_text = data.get("msg") or data.get("message") or "无返回消息"
-        integral = data.get("data", {}).get("integral", 0) or data.get("integral", 0)
-
-        # ==================== 判断签到结果（严格按用户要求） ====================
-        already_signed_keywords = ["已签到", "今日已签", "请勿重复签到", "重复签到", "当天已经签到", "当日已签"]
-        is_already_signed = any(kw in msg_text for kw in already_signed_keywords)
-
-        if is_already_signed:
-            sign_result = "今日已签到"
-            notify_flag = False
-        elif code in [200, "200", 0, "0"] or "成功" in msg_text:
-            sign_result = f"✅ 签到成功，获得 {integral} 积分"
-            notify_flag = True
-        else:
-            sign_result = f"❌ 签到失败: {msg_text}"
-            notify_flag = True
-
-        print(f"📢 签到结果: {sign_result}")
-
-        # ==================== 发送通知（仅成功/失败时通知） ====================
-        if notify_flag and send:
-            title = "✅ 成都地铁签到成功" if "签到成功" in sign_result else "❌ 成都地铁签到失败"
-            body = f"账号: {masked_token}\n{sign_result}"
-            send(title, body)
-            print("📨 已推送通知")
-        elif not notify_flag:
-            print("ℹ️ 今日已签到，无需通知")
-
-    except requests.exceptions.RequestException as e:
-        error_msg = f"❌ 网络请求异常: {e}"
-        print(error_msg)
-        if send:
-            send("成都地铁签到", f"账号 {masked_token} {error_msg}")
     except Exception as e:
-        error_msg = f"❌ 执行异常: {e}"
-        print(error_msg)
-        if send:
-            send("成都地铁签到", f"账号 {masked_token} {error_msg}")
+        return "error", f"请求异常: {e}"
 
-print("\n【成都地铁签到】全部账号执行完毕 ✅")
+    code = data.get("code")
+    msg = data.get("msg") or data.get("message") or "无消息"
+
+    if str(code) in ["0", "200", "000000"]:
+        inc = None
+        if isinstance(data.get("data"), dict):
+            inc = data["data"].get("integralIncrement")
+        if inc is not None:
+            return "success", f"{msg} (+{inc})"
+        return "success", msg
+
+    if "已签到" in str(msg) or "重复签到" in str(msg) or str(code) in ["1102"]:
+        return "already", msg
+
+    return "fail", f"{msg} (Code: {code})"
+
+
+def main():
+    env_val = os.getenv(ENV_NAME, "")
+    accounts = parse_accounts(env_val)
+
+    if not accounts:
+        print(f"❌ 未检测到账号，请设置环境变量 {ENV_NAME}")
+        print('示例: export CDRAIL_DATA=\'{"token":"xxx","app-token":"yyy","Cookie":"zzz"}\'')
+        sys.exit(0)
+
+    print(f"✅ 检测到 {len(accounts)} 个账号")
+
+    if random_signin and max_random_delay > 0:
+        delay_seconds = random.randint(0, max_random_delay)
+        if delay_seconds > 0:
+            signin_time = datetime.now() + timedelta(seconds=delay_seconds)
+            print(f"随机模式: 延迟 {format_time_remaining(delay_seconds)} 后签到")
+            print(f"预计签到时间: {signin_time.strftime('%H:%M:%S')}")
+            wait_with_countdown(delay_seconds)
+
+    msg_lines = []
+    success_count = 0
+    has_real_action = False
+
+    for idx, account_data in enumerate(accounts, start=1):
+        headers = build_headers(account_data)
+        token_preview = mask_text(str(headers.get("token", "")), 6, 6)
+        print(f"\n==== 开始第{idx}个账号签到 ====")
+        if token_preview:
+            print(f"Token: {token_preview}")
+
+        session = build_session()
+        status, info = cdrail_signin(session, headers)
+        session.close()
+
+        if status == "success":
+            success_count += 1
+            msg_lines.append(f"✅ 账号{idx}: {info}")
+            has_real_action = True
+        elif status == "already":
+            msg_lines.append(f"🟡 账号{idx}: {info}")
+            # 已签到不计入需要通知的动作
+        else:
+            msg_lines.append(f"❌ 账号{idx}: {info}")
+            has_real_action = True
+
+        if idx < len(accounts):
+            time.sleep(random.uniform(3, 8))
+
+    msg_lines.append(f"\n统计: 共{len(accounts)}个, 成功{success_count}个")
+    content = "\n".join(msg_lines)
+
+    print("\n" + content)
+
+    # 只有签到成功或失败时才通知
+    if has_real_action:
+        push(content)
+    else:
+        print("ℹ️ 所有账号今日已签到，无需发送通知")
+
+
+if __name__ == "__main__":
+    print(f"==== {SCRIPT_NAME}开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ====")
+    main()
