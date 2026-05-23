@@ -20,22 +20,17 @@
 3. MAX_RANDOM_DELAY (可选)
    - 随机延迟最大秒数，默认 3600 秒（1小时）
 
-【依赖安装】
+[依赖安装]
 
 青龙面板 → 依赖管理 → Python3 → 安装 requests
 
-【使用步骤】
+[使用步骤]
 
 1. 抓包获取 token、app-token、Cookie（推荐从签到接口请求头中提取）
 2. 在青龙面板添加环境变量 CDRAIL_DATA
 3. （可选）添加 RANDOM_SIGNIN=true 开启随机延迟
 4. 添加定时任务，推荐 cron: 0 9 * * *
 5. 通知规则：只有「签到成功」或「签到失败」时才推送通知，已签到不通知
-
-【通知规则】
-- 仅当账号签到成功 或 签到失败 时发送通知
-- 今日已签到 → 不发送通知
-- 多账号时只发送一条汇总通知
 
 ================================================================================
 """
@@ -185,7 +180,6 @@ def parse_accounts(env_value: str):
 def build_headers(account_data: dict) -> dict:
     headers = DEFAULT_HEADERS.copy()
 
-    # 允许用户传入完整 headers；同时兼容 cookie/token/app-token 等关键字段写法
     for k, v in (account_data or {}).items():
         if v is None:
             continue
@@ -198,7 +192,6 @@ def build_headers(account_data: dict) -> dict:
         elif lk in ("app-token", "apptoken", "app_token"):
             headers["app-token"] = v
         elif lk in ("deviceid", "device-id", "device_id"):
-            # 默认 headers 同时存在 deviceId / device-id，通常两者需保持一致
             headers["deviceId"] = v
             headers["device-id"] = v
 
@@ -230,8 +223,8 @@ def cdrail_signin(session: requests.Session, headers: dict):
         if isinstance(data.get("data"), dict):
             inc = data["data"].get("integralIncrement")
         if inc is not None:
-            return "success", f"{msg} (+{inc})"
-        return "success", msg
+            return "success", f"签到成功 (+{inc})"  # 已改为中文
+        return "success", "签到成功"
 
     if "已签到" in str(msg) or "重复签到" in str(msg) or str(code) in ["1102"]:
         return "already", msg
@@ -245,7 +238,6 @@ def main():
 
     if not accounts:
         print(f"❌ 未检测到账号，请设置环境变量 {ENV_NAME}")
-        print('示例: export CDRAIL_DATA=\'{"token":"xxx","app-token":"yyy","Cookie":"zzz"}\'')
         sys.exit(0)
 
     print(f"✅ 检测到 {len(accounts)} 个账号")
@@ -253,9 +245,6 @@ def main():
     if random_signin and max_random_delay > 0:
         delay_seconds = random.randint(0, max_random_delay)
         if delay_seconds > 0:
-            signin_time = datetime.now() + timedelta(seconds=delay_seconds)
-            print(f"随机模式: 延迟 {format_time_remaining(delay_seconds)} 后签到")
-            print(f"预计签到时间: {signin_time.strftime('%H:%M:%S')}")
             wait_with_countdown(delay_seconds)
 
     msg_lines = []
@@ -279,7 +268,6 @@ def main():
             has_real_action = True
         elif status == "already":
             msg_lines.append(f"🟡 账号{idx}: {info}")
-            # 已签到不计入需要通知的动作
         else:
             msg_lines.append(f"❌ 账号{idx}: {info}")
             has_real_action = True
@@ -292,7 +280,6 @@ def main():
 
     print("\n" + content)
 
-    # 只有签到成功或失败时才通知
     if has_real_action:
         push(content)
     else:
