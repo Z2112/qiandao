@@ -119,12 +119,13 @@ for idx, cookie in enumerate(cookie_list, 1):
         except:
             pass
 
-        # 获取精币
+        # 获取精币（清理单位）
         credit_resp = session.get("https://bbs.ijingyi.com/home.php?mod=spacecp&ac=credit&showcredit=1", headers=base_headers, timeout=15)
-        jb_match = re.search(r'精币: .*?>([0-9,]+)<', credit_resp.text)
+        jb_match = re.search(r'精币: .*?>(.*?)<', credit_resp.text)
         jb_val = jb_match.group(1).strip() if jb_match else 'N/A'
+        jb_val = re.sub(r'[^\d]', '', jb_val)  # 只保留数字
 
-        # 紧凑输出格式 (移除固定「枚」)
+        # 紧凑输出格式
         compact_line = f"当前账户 --- 【连续签到天数】：{streak_days} 天 --- 【签到奖励】：{reward_text} --- 【精币】：{jb_val}"
         print(compact_line)
 
