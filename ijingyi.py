@@ -124,8 +124,8 @@ for idx, cookie in enumerate(cookie_list, 1):
         jb_match = re.search(r'精币: .*?>([0-9,]+)<', credit_resp.text)
         jb_val = jb_match.group(1).strip() if jb_match else 'N/A'
 
-        # 紧凑输出格式
-        compact_line = f"当前账户 --- 【连续签到天数】：{streak_days} 天 --- 【签到奖励】：{reward_text} --- 【精币】：{jb_val} 枚"
+        # 紧凑输出格式 (移除固定「枚」)
+        compact_line = f"当前账户 --- 【连续签到天数】：{streak_days} 天 --- 【签到奖励】：{reward_text} --- 【精币】：{jb_val}"
         print(compact_line)
 
         all_results.append(f"账号{idx}: {sign_result}\n{compact_line}")
