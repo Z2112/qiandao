@@ -14,7 +14,7 @@
 # 【可选变量】
 #    RANDOM_SIGNIN      → true 开启随机延迟（默认 false）
 #    MAX_RANDOM_DELAY   → 最大随机延迟秒数（默认 3600 秒 = 1小时）
-# 【通知逻辑】 今日已签到（“当天已经签到”、“不需要重复签到”等）→ 仅打印日志，不通知；签到成功或失败 → 通过青龙通知系统推送
+# 【通知逻辑】 今日已签到（“当天已签到”、“不需要重复签到”等）→ 仅打印日志，不通知；签到成功或失败 → 通过青龙通知系统推送
 #
 # 【详细使用步骤】
 # 1. 青龙面板 → 依赖管理 → 新建 Python 依赖，安装以下依赖：
@@ -29,12 +29,12 @@
 # • 脚本会自动识别并处理多个 Cookie
 # • 如出现签到失败，可尝试重新登录获取最新 Cookie
 #
-# 作者：Grok（根据用户提供的 jinjiang.py 优化）
-# 更新日期：2026-05-21
+# 作者：Grok
+# 更新日期：2026-05-23
 """
 
 # cron: 0 10 * * *
-# new Env('晋江文学签到')
+# new Env('晋江文学城签到')
 
 import os
 import re
@@ -80,10 +80,9 @@ else:
 
 # ==================== 解析多 Cookie ====================
 def parse_cookies(env_value: str):
-    """支持换行、&、@ 分割多个 Cookie"""
+    """ 支持换行、&、@ 分割多个 Cookie """
     if not env_value:
         return []
-    # 按换行、&、@ 分割并清理
     cookies = [c.strip() for c in re.split(r'[\n@&]', env_value) if c.strip()]
     return cookies
 
@@ -111,7 +110,6 @@ def get_headers(cookie: str):
 # ==================== 主流程 ====================
 for idx, cookie in enumerate(cookies_list, 1):
     print(f"\n📌 第 {idx}/{len(cookies_list)} 个账号")
-    # 简单打码显示 Cookie（保护隐私）
     masked_cookie = cookie[:15] + "..." + cookie[-10:] if len(cookie) > 25 else cookie
 
     try:
@@ -122,16 +120,34 @@ for idx, cookie in enumerate(cookies_list, 1):
         resp = requests.get(sign_url, headers=headers, timeout=15)
         resp.raise_for_status()
 
-        # 解析 JSON
         data = resp.json()
         message = data.get("message", "")
-        signdays = data.get("signdays", "0")
-        coins = data.get("coins", "0")
 
         print(f"📢 签到返回信息: {message}")
 
+        # ==================== 提取 signdays 和 coins ====================
+        # 优先从 JSON 获取，如果不存在则从 message 字符串解析
+        signdays = data.get("signdays")
+        coins = data.get("coins")
+
+        # 如果 JSON 中没有，则尝试从 message 中提取
+        if signdays is None or coins is None:
+            # 尝试从 message 中提取连续天数和月石数量
+            days_match = re.search(r'已连续签到\s*(\d+)\s*天', message)
+            coins_match = re.search(r'获得月石\s*(\d+)', message)
+
+            if days_match:
+                signdays = days_match.group(1)
+            else:
+                signdays = "0"
+
+            if coins_match:
+                coins = coins_match.group(1)
+            else:
+                coins = "0"
+
         # ==================== 判断签到结果 ====================
-        if "当天已经签到" in message or "不需要重复签到" in message:
+        if "当天已签到" in message or "不需要重复签到" in message:
             sign_result = "今日已签到"
             notify_flag = False
         elif "签到成功" in message or "成功" in message:
@@ -141,18 +157,24 @@ for idx, cookie in enumerate(cookies_list, 1):
             sign_result = "❌ 签到失败或异常"
             notify_flag = True
 
-        # 构建积分信息（与HAR日志格式一致）
-        points_msg = f"{message}！--- 您已连续签到{signdays}天，累计获得月石{coins}枚。"
-        print(points_msg)
+        # 构建结果信息
+        points_msg = f"您已连续签到{signdays}天，累计获得月石{coins}枚。"
 
-        # ==================== 发送通知（仅成功/失败时通知） ====================
+        if message:
+            full_msg = f"{message}！--- {points_msg}"
+        else:
+            full_msg = points_msg
+
+        print(full_msg)
+
+        # ==================== 发送通知 ====================
         if notify_flag and send:
             if "签到成功" in sign_result:
                 title = "✅ 晋江文学城签到成功"
-                body = f"账号: {masked_cookie}\n{sign_result}\n\n{points_msg}"
+                body = f"账号: {masked_cookie}\n{sign_result}\n\n{full_msg}"
             else:
                 title = "❌ 晋江文学城签到失败"
-                body = f"账号: {masked_cookie}\n{sign_result}\n\n{points_msg}\n\n响应内容：{resp.text[:300]}"
+                body = f"账号: {masked_cookie}\n{sign_result}\n\n{full_msg}\n\n响应内容：{resp.text[:300]}"
             send(title, body)
             print("📨 已通过青龙通知系统发送结果")
         elif not notify_flag:
