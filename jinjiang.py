@@ -59,12 +59,6 @@ for idx, cookie in enumerate(cookies_list, 1):
         resp = requests.get("https://m.jjwxc.net/my/signIn", headers=headers, timeout=15)
         data = resp.json()
 
-        # ==================== 保存返回内容（调试用）====================
-        save_path = os.path.join(os.getcwd(), "jinjiang_last_response.json")
-        with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"📁 已保存响应到: {save_path}")
-
         message = data.get("message", "")
         print(f"📢 返回信息: {message}")
 
