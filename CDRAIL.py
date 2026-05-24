@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# new Env('成都地铁签到')
+
 """
 ================================================================================
 青龙面板 - 成都地铁签到脚本
@@ -30,8 +32,6 @@
 2. 在青龙面板添加环境变量 CDRAIL_DATA
 3. （可选）添加 RANDOM_SIGNIN=true 开启随机延迟
 4. 添加定时任务，推荐 cron: 0 9 * * *
-5. 通知规则：只有「签到成功」或「签到失败」时才推送通知，已签到不通知
-
 ================================================================================
 """
 
@@ -223,7 +223,7 @@ def cdrail_signin(session: requests.Session, headers: dict):
         if isinstance(data.get("data"), dict):
             inc = data["data"].get("integralIncrement")
         if inc is not None:
-            return "success", f"签到成功 (+{inc})"  # 已改为中文
+            return "success", f"签到成功 (+{inc})"
         return "success", "签到成功"
 
     if "已签到" in str(msg) or "重复签到" in str(msg) or str(code) in ["1102"]:
