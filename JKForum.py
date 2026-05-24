@@ -4,31 +4,19 @@
 
 """
 ================================================================================
-青龙面板 - JKForum 签到脚本 (多账号 v2.3 - 无本地文件实时对比版)
+青龙面板 - JKForum 签到脚本 (v2.6 详细注释版)
 ================================================================================
 
-【重要更新 v2.3】
-- 完全移除 jkforum_data.json 本地文件依赖
-- 采用「执行前 vs 执行后」实时对比，准确显示本次运行实际增加了多少金币/宝石
-- 保留原有所有功能（多账号、智能跳过、浏览点赞、清理通知等）
+【v2.6 主要更新】
+- 新增「总奖励领取成功/失败」通知
+- 通知中会显示本次成功领取的总奖励阶段数量
+- 文章间延迟调整为随机 3~5 秒
+- 领取总奖励前会再次检查并尝试完成浏览点赞类任务
+- 支持按需浏览和点赞（可控制数量）
 
-【环境变量配置】
-
-1. JKFORUM_COOKIE (必填)
-   - 支持多账号（& 分隔 或 换行分隔）
-
-2. RANDOM_SIGNIN (可选)
-   true  = 启用启动随机延迟（防检测，推荐）
-   false = 立即执行（默认）
-
-3. MAX_RANDOM_DELAY (可选)
-   随机延迟最大秒数，默认 3600（1小时）
-
-【通知规则（重要）】
-• 仅当账号「签到成功」或「签到失败」时发送通知
-• 如果账号今日「已经签到」，则跳过该账号的通知
-• 全部账号已签到 → 当天完全不发通知
-
+【使用建议】
+- 延迟已改短，建议先用 1 个账号测试
+- 如运行异常，建议把延迟改回 15~30 秒
 ================================================================================
 """
 
@@ -46,23 +34,21 @@ except ImportError:
     send = lambda t, c: print("推送未启用")
 
 JKFORUM_COOKIE = os.environ.get("JKFORUM_COOKIE", "")
-
-# ==================== 随机延迟配置（默认关闭） ====================
 RANDOM_SIGNIN = os.environ.get("RANDOM_SIGNIN", "false").lower() == "true"
 MAX_RANDOM_DELAY = int(os.environ.get("MAX_RANDOM_DELAY", 3600))
 
 
 def random_delay_if_enabled():
+    """随机延迟启动（防检测）"""
     if RANDOM_SIGNIN:
         delay = random.randint(1, MAX_RANDOM_DELAY)
-        minutes = delay // 60
-        seconds = delay % 60
-        print(f"\n[随机延迟] RANDOM_SIGNIN 已启用，剩余 {minutes} 分钟 {seconds} 秒后开始执行...")
+        print(f"\n[随机延迟] RANDOM_SIGNIN 已启用，剩余 {delay//60} 分钟 {delay%60} 秒后开始执行...")
         time.sleep(delay)
         print("    ✅ 延迟结束，开始执行任务\n")
 
 
 def parse_multi_cookies(cookie_env):
+    """解析多账号 Cookie"""
     if not cookie_env or not cookie_env.strip():
         return []
     raw_list = cookie_env.replace('\n', '&').split('&')
@@ -70,6 +56,7 @@ def parse_multi_cookies(cookie_env):
 
 
 def parse_cookie_string(cookie_str):
+    """将 Cookie 字符串转为字典"""
     if not cookie_str:
         return {}
     return {k.strip(): v.strip() for k, v in 
@@ -77,26 +64,25 @@ def parse_cookie_string(cookie_str):
 
 
 def get_member_id_from_jwt(cookies):
+    """从 JWT 中提取 memberId（用于清理通知）"""
     for key in ['ap-pot', 'jkf-ap-pot']:
         token = cookies.get(key)
         if not token or '.' not in token:
             continue
         try:
             parts = token.split('.')
-            if len(parts) < 2:
-                continue
             payload_b64 = parts[1]
             padding = '=' * (4 - len(payload_b64) % 4) if len(payload_b64) % 4 else ''
-            payload_bytes = base64.urlsafe_b64decode(payload_b64 + padding)
-            payload = json.loads(payload_bytes)
+            payload = json.loads(base64.urlsafe_b64decode(payload_b64 + padding))
             if 'uid' in payload:
                 return int(payload['uid'])
-        except Exception:
+        except:
             continue
     return None
 
 
 def clear_all_notifications(cookies):
+    """清理全部站内信"""
     print("\n[清理通知 - 删除所有站内信]")
     member_id = get_member_id_from_jwt(cookies)
     if not member_id:
@@ -105,13 +91,11 @@ def clear_all_notifications(cookies):
 
     url = "https://jkforum.net/api/jkf-member-inbox/v1/Message"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Content-Type": "application/json",
         "Accept": "application/json",
         "Origin": "https://jkforum.net",
         "Referer": "https://jkforum.net/task",
-        "Accept-Language": "zh-CN,zh;q=0.9",
-        "x-app-version": "1.0.0.1779162684",
         "x-signature": "pBBuSsmbqU",
         "x-signature-date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3] + "Z",
     }
@@ -133,12 +117,11 @@ def clear_all_notifications(cookies):
 VIEW_BOARDS = [141, 555, 374, 382, 246]
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Content-Type": "application/json",
     "Accept": "*/*",
     "Origin": "https://jkforum.net",
     "Referer": "https://jkforum.net/",
-    "Accept-Language": "zh-CN,zh;q=0.9",
 }
 
 TRACK_KEYS = {
@@ -146,51 +129,39 @@ TRACK_KEYS = {
 }
 
 
-def get_user_info(cookies):
-    url = "https://jkforum.net/api/legoin/v1/SignInInformation"
-    try:
-        resp = requests.get(url, headers=HEADERS, cookies=cookies, timeout=15)
-        return resp.json() if resp.status_code == 200 else None
-    except:
-        return None
-
-
 def get_current_assets(cookies):
     """获取当前资产"""
-    user_info = get_user_info(cookies)
-    if not user_info or "content" not in user_info:
-        return {}
-    content = user_info["content"]
-    wallet = content.get("wallet", {}).get("credits", [])
-    return {
-        TRACK_KEYS.get(item["id"], str(item["id"])): item.get("point", 0)
-        for item in wallet if item.get("id") in TRACK_KEYS
-    }
+    try:
+        resp = requests.get("https://jkforum.net/api/legoin/v1/SignInInformation", headers=HEADERS, cookies=cookies, timeout=15)
+        if resp.status_code == 200:
+            wallet = resp.json().get("content", {}).get("wallet", {}).get("credits", [])
+            return {TRACK_KEYS.get(item["id"], str(item["id"])): item.get("point", 0) 
+                    for item in wallet if item.get("id") in TRACK_KEYS}
+    except:
+        pass
+    return {}
 
 
 def get_daily_tasks(cookies):
-    url = "https://jkforum.net/api/jkf-dailyTask-api/v1/DailyTask"
+    """获取每日任务列表"""
     try:
-        resp = requests.get(url, headers=HEADERS, cookies=cookies, timeout=15)
-        if resp.status_code == 200:
-            return resp.json().get("content", {}).get("tasks", [])
-        return []
+        resp = requests.get("https://jkforum.net/api/jkf-dailyTask-api/v1/DailyTask", headers=HEADERS, cookies=cookies, timeout=15)
+        return resp.json().get("content", {}).get("tasks", []) if resp.status_code == 200 else []
     except:
         return []
 
 
 def get_daily_stages(cookies):
-    url = "https://jkforum.net/api/jkf-dailyTask-api/v1/DailyStage"
+    """获取每日任务阶段奖励"""
     try:
-        resp = requests.get(url, headers=HEADERS, cookies=cookies, timeout=15)
-        if resp.status_code == 200:
-            return resp.json().get("content", {})
-        return {}
+        resp = requests.get("https://jkforum.net/api/jkf-dailyTask-api/v1/DailyStage", headers=HEADERS, cookies=cookies, timeout=15)
+        return resp.json().get("content", {}) if resp.status_code == 200 else {}
     except:
         return {}
 
 
 def should_perform_task(task):
+    """判断任务是否需要执行"""
     if task.get("isCompleted"):
         return False
     details = task.get("details", [])
@@ -203,11 +174,12 @@ def should_perform_task(task):
 
 
 def do_sign_in(cookies):
+    """执行每日签到"""
     print("\n[每日签到]")
-    url = "https://jkforum.net/api/jkf-dailysign/v1/DailySign"
-    payload = {"moodStickerId": random.randint(1, 9), "message": "签到"}
     try:
-        resp = requests.put(url, headers=HEADERS, cookies=cookies, json=payload, timeout=15)
+        resp = requests.put("https://jkforum.net/api/jkf-dailysign/v1/DailySign",
+                            headers=HEADERS, cookies=cookies,
+                            json={"moodStickerId": random.randint(1, 9), "message": "签到"}, timeout=15)
         if resp.status_code == 204:
             print("    ✅ 签到成功")
             return "success"
@@ -223,240 +195,167 @@ def do_sign_in(cookies):
 
 
 def get_article_list(cookies, board_id, limit=40):
-    url = f"https://jkforum.net/api/jkf-forum/v1/Article/{board_id}"
-    params = {"tab": 0, "isQueryPin": "true", "Offset": 0, "Limit": limit}
     try:
-        resp = requests.get(url, headers=HEADERS, cookies=cookies, params=params, timeout=15)
-        if resp.status_code == 200:
-            return resp.json().get("content", {}).get("articles", [])
-        return []
+        resp = requests.get(f"https://jkforum.net/api/jkf-forum/v1/Article/{board_id}",
+                            headers=HEADERS, cookies=cookies, params={"Limit": limit}, timeout=15)
+        return resp.json().get("content", {}).get("articles", []) if resp.status_code == 200 else []
     except:
         return []
 
 
 def get_article_detail(cookies, article_id):
-    url = f"https://jkforum.net/api/jkf-forum/v1/ArticleThread/{article_id}"
     try:
-        resp = requests.get(url, headers=HEADERS, cookies=cookies, timeout=15)
-        return resp.status_code == 200
+        return requests.get(f"https://jkforum.net/api/jkf-forum/v1/ArticleThread/{article_id}",
+                            headers=HEADERS, cookies=cookies, timeout=10).status_code == 200
     except:
         return False
 
 
 def like_article(cookies, board_id, article_id):
-    url = f"https://jkforum.net/api/jkf-forum/v1/ArticleLike/{board_id}/{article_id}"
     try:
-        resp = requests.put(url, headers=HEADERS, cookies=cookies, timeout=15)
-        return resp.status_code == 204
+        return requests.put(f"https://jkforum.net/api/jkf-forum/v1/ArticleLike/{board_id}/{article_id}",
+                            headers=HEADERS, cookies=cookies, timeout=10).status_code == 204
     except:
         return False
 
 
-def get_comments(cookies, article_id, limit=8):
-    url = f"https://jkforum.net/api/jkf-forum/v1/CommentThread/{article_id}"
-    params = {"authorOnly": "false", "sortingType": 1, "Offset": 0, "Limit": limit}
+def get_comments(cookies, article_id, limit=6):
     try:
-        resp = requests.get(url, headers=HEADERS, cookies=cookies, params=params, timeout=15)
-        if resp.status_code == 200:
-            return resp.json().get("content", [])
-        return []
+        resp = requests.get(f"https://jkforum.net/api/jkf-forum/v1/CommentThread/{article_id}",
+                            headers=HEADERS, cookies=cookies, params={"Limit": limit}, timeout=10)
+        return resp.json().get("content", []) if resp.status_code == 200 else []
     except:
         return []
 
 
 def like_comment(cookies, board_id, comment_id):
-    url = f"https://jkforum.net/api/jkf-forum/v1/CommentLike/{board_id}/{comment_id}"
     try:
-        resp = requests.put(url, headers=HEADERS, cookies=cookies, timeout=15)
-        return resp.status_code == 204
+        return requests.put(f"https://jkforum.net/api/jkf-forum/v1/CommentLike/{board_id}/{comment_id}",
+                            headers=HEADERS, cookies=cookies, timeout=10).status_code == 204
     except:
         return False
 
 
-def do_browse_and_like_tasks(cookies):
-    print("\n[浏览 + 点赞任务]")
+def do_browse_and_like_tasks(cookies, max_article_likes=3, max_comment_likes=3, max_browse=10):
+    """浏览 + 点赞任务（支持按需 + 短延迟）"""
+    print(f"\n[浏览 + 点赞任务] 浏览{max_browse}篇")
     board_id = random.choice(VIEW_BOARDS)
-    articles = get_article_list(cookies, board_id=board_id, limit=40)
-
+    articles = get_article_list(cookies, board_id, max_browse + 5)
     if not articles:
         print("    ❌ 获取文章列表失败")
         return
 
-    viewed = 0
-    liked_article = 0
-    liked_comment = 0
-
-    for idx, article in enumerate(articles[:30], 1):
-        article_id = article.get("id")
-        if not article_id:
-            continue
-        if get_article_detail(cookies, article_id):
+    viewed = liked_article = liked_comment = 0
+    for idx, article in enumerate(articles[:max_browse], 1):
+        aid = article.get("id")
+        if get_article_detail(cookies, aid):
             viewed += 1
-        if liked_article < 5 and like_article(cookies, board_id, article_id):
+        if liked_article < max_article_likes and like_article(cookies, board_id, aid):
             liked_article += 1
-        if idx < 30:
-            delay = random.randint(30, 60)
-            print(f"    已处理 {idx}/30，等待 {delay} 秒...")
+        if idx < max_browse:
+            delay = random.randint(3, 5)
+            print(f"    已处理 {idx}/{max_browse}，等待 {delay} 秒...")
             time.sleep(delay)
 
     for article in random.sample(articles, min(5, len(articles))):
-        comments = get_comments(cookies, article.get("id"), limit=6)
-        for comment in comments[:2]:
-            if liked_comment < 5 and like_comment(cookies, board_id, comment.get("id")):
+        for comment in get_comments(cookies, article.get("id"), 4):
+            if liked_comment < max_comment_likes and like_comment(cookies, board_id, comment.get("id")):
                 liked_comment += 1
 
-    print(f"    ✅ 浏览 {viewed} 篇，点赞文章 {liked_article} 篇，点赞留言 {liked_comment} 则")
-
-
-def browse_specific_boards(cookies):
-    print("\n[逛逛特定版區]")
-    for board_id, name in [(481, "女神焦點"), (520, "IG推特美女")]:
-        url = f"https://jkforum.net/api/jkf-forum/v1/Board/{board_id}"
-        try:
-            resp = requests.get(url, headers=HEADERS, cookies=cookies, timeout=15)
-            if resp.status_code == 200:
-                title = resp.json().get("content", {}).get("title", name)
-                print(f"    ✅ 已浏览 {title}")
-            else:
-                print(f"    ❌ 浏览 {name} 失败")
-        except Exception as e:
-            print(f"    ❌ 浏览 {name} 异常: {e}")
+    print(f"    ✅ 浏览{viewed}篇，点赞文章{liked_article}篇，点赞留言{liked_comment}则")
 
 
 def claim_daily_stage_rewards(cookies):
+    """领取每日任务总奖励，返回成功领取的数量"""
     print("\n[领取每日任务总奖励]")
     stage_data = get_daily_stages(cookies)
     stages = stage_data.get("stages", [])
-    if not stages:
-        print("    未获取到总奖励阶段")
-        return
     uncompleted = [s for s in stages if not s.get("isCompleted", False)]
+
     if not uncompleted:
-        print("    ✅ 总奖励已全部领取，跳过")
-        return
-    print(f"    发现 {len(uncompleted)} 个未领取的总奖励阶段")
+        print("    ✅ 总奖励已全部领取")
+        return 0
+
     claimed = 0
     for stage in uncompleted:
-        stage_id = stage.get("id")
-        print(f"    尝试领取 stageId={stage_id}")
-        if complete_daily_stage(cookies, stage_id):
-            claimed += 1
-            print(f"    ✅ 领取成功 stageId={stage_id}")
-        else:
-            print(f"    ❌ 领取失败 stageId={stage_id}")
+        try:
+            resp = requests.post("https://jkforum.net/api/jkf-dailyTask-api/v1/DailyStage/CompleteStage",
+                                 headers=HEADERS, cookies=cookies, json={"stageId": stage["id"]}, timeout=15)
+            if resp.status_code in [200, 201]:
+                claimed += 1
+                print(f"    ✅ 领取成功 stageId={stage['id']}")
+        except:
+            print(f"    ❌ 领取失败 stageId={stage['id']}")
+
     print(f"    本次共领取 {claimed} 个总奖励阶段")
-
-
-def complete_daily_stage(cookies, stage_id):
-    url = "https://jkforum.net/api/jkf-dailyTask-api/v1/DailyStage/CompleteStage"
-    try:
-        resp = requests.post(url, headers=HEADERS, cookies=cookies, json={"stageId": stage_id}, timeout=15)
-        return resp.status_code in [200, 201]
-    except:
-        return False
+    return claimed
 
 
 def complete_task(cookies, task_id):
-    url = "https://jkforum.net/api/jkf-dailyTask-api/v1/DailyTask/CompleteTask"
     try:
-        resp = requests.post(url, headers=HEADERS, cookies=cookies, json={"taskId": task_id}, timeout=15)
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("code") == "200000"
-        return False
+        resp = requests.post("https://jkforum.net/api/jkf-dailyTask-api/v1/DailyTask/CompleteTask",
+                             headers=HEADERS, cookies=cookies, json={"taskId": task_id}, timeout=15)
+        return resp.status_code == 200 and resp.json().get("code") == "200000"
     except:
         return False
 
 
 def process_account(cookies, account_num, total_accounts):
-    """处理单个账号（v2.3 无本地文件版）"""
+    """处理单个账号"""
     print(f"\n{'='*65}")
     print(f"🚀 处理账号 {account_num}/{total_accounts}")
     print(f"{'='*65}")
 
-    # ===== 执行前记录资产 =====
     before_assets = get_current_assets(cookies)
-
     tasks = get_daily_tasks(cookies)
     task_status = {t["name"]: t.get("isCompleted", False) for t in tasks}
-    incomplete_tasks = [name for name, completed in task_status.items() if not completed]
 
     print("\n📋 当前每日任务状态：")
-    print("-" * 65)
     for name, completed in task_status.items():
-        status = "✅ 已完成" if completed else "❌ 未完成"
-        print(f"  {name:<22} {status}")
-    print("-" * 65)
+        print(f"  {name:<22} {'✅ 已完成' if completed else '❌ 未完成'}")
 
-    signin_status = None
+    signin_status = do_sign_in(cookies) if not task_status.get("進行每日簽到", False) else "already_signed"
 
-    if not incomplete_tasks:
-        print("\n✅ 所有每日任务已完成，无需执行操作")
-    else:
-        print(f"\n🔄 发现 {len(incomplete_tasks)} 个未完成任务，开始执行...")
+    LIKE_TASK_NAMES = ["對三篇文章點讚", "對三則留言點讚", "觀看任30篇文章"]
+    need_browse_like = any(t["name"] in LIKE_TASK_NAMES and not t.get("isCompleted") for t in tasks)
 
-        if not task_status.get("進行每日簽到", False):
-            signin_status = do_sign_in(cookies)
-        else:
-            signin_status = "already_signed"
+    if need_browse_like:
+        do_browse_and_like_tasks(cookies, max_article_likes=3, max_comment_likes=3, max_browse=10)
 
-        need_browse_like = False
-        for task in tasks:
-            task_name = task["name"]
-            action = should_perform_task(task)
-            if action == "claim_only":
+    # 领取总奖励前再次检查任务
+    tasks = get_daily_tasks(cookies)
+    for task in tasks:
+        if task["name"] in LIKE_TASK_NAMES and not task.get("isCompleted", False):
+            if should_perform_task(task) in ["claim_only", True]:
                 complete_task(cookies, task["id"])
-                print(f"    [{task_name}] 进度已达标，已调用完成接口")
-            elif action is True:
-                if task_name in ["觀看任30篇文章", "對三篇文章點讚", "對三則留言點讚"]:
-                    need_browse_like = True
 
-        if need_browse_like:
-            do_browse_and_like_tasks(cookies)
-
-        if (not task_status.get("逛逛版區-女神焦點", True) or
-            not task_status.get("逛逛版區-IG推特美女", True)):
-            browse_specific_boards(cookies)
-
-    claim_daily_stage_rewards(cookies)
+    stage_claimed = claim_daily_stage_rewards(cookies)
     clear_all_notifications(cookies)
 
-    # ===== 执行后记录资产并计算本次增加 =====
     after_assets = get_current_assets(cookies)
-
     increase_lines = []
     for name in TRACK_KEYS.values():
-        before = before_assets.get(name, 0)
-        after = after_assets.get(name, 0)
-        diff = after - before
+        diff = after_assets.get(name, 0) - before_assets.get(name, 0)
         if diff != 0:
-            increase_lines.append(f"{name}: {'+' if diff > 0 else ''}{diff}")
-
-    increase_text = "\n".join(increase_lines) if increase_lines else "本次运行无资产变化"
+            increase_lines.append(f"{name}: +{diff}")
 
     print(f"\n【本次运行资产变化】")
-    if increase_lines:
-        for line in increase_lines:
-            print(f"  {line}")
-    else:
-        print("  本次运行无资产变化")
-
-    print(f"\n【账号 {account_num} 当前总资产】")
-    print(f"  金币: {after_assets.get('金币', 0):>8}    宝石: {after_assets.get('宝石', 0):>8}")
-    print(f"  名声: {after_assets.get('名声', 0):>8}    体力: {after_assets.get('体力', 0):>8}")
+    print("\n".join(increase_lines) if increase_lines else "  无明显变化")
+    print(f"\n【当前总资产】 金币: {after_assets.get('金币', 0)}  宝石: {after_assets.get('宝石', 0)}")
 
     return {
         "account_num": account_num,
-        "signin_status": signin_status or "skipped",
+        "signin_status": signin_status,
         "current_assets": after_assets,
-        "increase_text": increase_text
+        "increase_text": "\n".join(increase_lines) if increase_lines else "无明显变化",
+        "stage_claimed": stage_claimed
     }
 
 
 def jkforum_main():
     print("\n" + "=" * 65)
-    print(f"🚀 JKForum 多账号智能脚本启动")
-    print(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🚀 JKForum 签到脚本启动 (v2.6 详细注释版)")
+    print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 65)
 
     random_delay_if_enabled()
@@ -466,49 +365,35 @@ def jkforum_main():
         return
 
     cookies_list = parse_multi_cookies(JKFORUM_COOKIE)
-    if not cookies_list:
-        print("❌ 未解析到有效 Cookie，请检查环境变量格式")
-        return
-
-    print(f"📌 共检测到 {len(cookies_list)} 个账号，开始顺序处理...\n")
-
     results = []
     for idx, cookie_str in enumerate(cookies_list, 1):
         cookies = parse_cookie_string(cookie_str)
-        if not cookies:
-            print(f"账号 {idx}: Cookie 格式无效，跳过该账号\n")
-            continue
-        res = process_account(cookies, idx, len(cookies_list))
-        results.append(res)
+        if cookies:
+            res = process_account(cookies, idx, len(cookies_list))
+            results.append(res)
 
     notify_list = [r for r in results if r["signin_status"] in ["success", "failed"]]
 
     if notify_list:
-        print(f"\n📢 检测到 {len(notify_list)} 个账号需要通知，正在发送...")
         notify_lines = []
         for r in notify_list:
-            status_emoji = "✅" if r["signin_status"] == "success" else "❌"
-            status_text = "签到成功" if r["signin_status"] == "success" else "签到失败/异常"
-            assets = r["current_assets"]
-            increase = r.get("increase_text", "无变化")
+            status = "✅ 签到成功" if r["signin_status"] == "success" else "❌ 签到失败"
+            stage_info = f"总奖励领取: {r.get('stage_claimed', 0)} 个阶段" if r.get('stage_claimed', 0) > 0 else "总奖励领取: 未领取或失败"
 
-            line = (
-                f"【账号 {r['account_num']}】 {status_emoji} {status_text}\n"
-                f"金币: {assets.get('金币', 0)}   宝石: {assets.get('宝石', 0)}\n"
-                f"名声: {assets.get('名声', 0)}   体力: {assets.get('体力', 0)}\n"
-                f"本次增加: {increase if increase != '本次运行无资产变化' else '无明显变化'}"
-            )
+            line = f"""【账号 {r['account_num']}】 {status}
+{r['increase_text']}
+{stage_info}
+当前资产: 金币 {r['current_assets'].get('金币', 0)} | 宝石 {r['current_assets'].get('宝石', 0)}"""
             notify_lines.append(line)
 
-        notify_content = "\n\n" + "="*40 + "\n\n".join(notify_lines)
-        title = f"JKForum 签到 | {datetime.now().strftime('%m-%d %H:%M')} ({len(notify_list)}账号)"
-        send(title, notify_content)
-        print("✅ 通知发送完成")
+        content = "\n\n" + "="*40 + "\n\n".join(notify_lines)
+        send(f"JKForum 签到 | {datetime.now().strftime('%m-%d %H:%M')}", content)
+        print("✅ 通知已发送")
     else:
-        print("\n✅ 所有账号今日已签到或无需操作，本次不发送通知（符合规则）")
+        print("✅ 无需发送通知（全部已签到或跳过）")
 
     print("\n" + "=" * 65)
-    print("✅ 全部账号处理完毕，脚本结束")
+    print("✅ 脚本执行完毕")
     print("=" * 65 + "\n")
 
 
