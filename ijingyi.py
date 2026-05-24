@@ -18,58 +18,40 @@ print("【精易论坛签到】多账号任务开始...")
 def get_all_cookies():
     raw = os.getenv('IJINGYI_COOKIE')
     if not raw:
-        msg = "❌ 未设置 IJINGYI_COOKIE 环境变量"
-        print(msg)
-        if send:
-            send("精易论坛签到", msg)
+        print("❌ 未设置 IJINGYI_COOKIE 环境变量")
         sys.exit(1)
+    cookies_list = [c.strip() for line in raw.split('&') for c in line.split('\n') if c.strip()]
+    return [c for c in cookies_list if len(c) > 20]
 
-    cookies_list = raw.split('&')
-    cookies_list = [c.strip() for line in cookies_list for c in line.split('\n') if c.strip()]
-    cookies_list = [c for c in cookies_list if len(c) > 20]
-
-    if not cookies_list:
-        msg = "❌ IJINGYI_COOKIE 内容为空或格式错误"
-        print(msg)
-        if send:
-            send("精易论坛签到", msg)
-        sys.exit(1)
-
-    print(f"✅ 从 IJINGYI_COOKIE 读取到 {len(cookies_list)} 个账号")
-    return cookies_list
-
-
-# 随机延迟
-random_signin = os.getenv('RANDOM_SIGNIN', 'false').lower() == 'true'
-max_random_delay = os.getenv('MAX_RANDOM_DELAY')
-
-if random_signin:
+if os.getenv('RANDOM_SIGNIN', 'false').lower() == 'true':
     try:
-        max_d = int(max_random_delay) if max_random_delay else 3600
-        if max_d > 0:
-            delay_sec = random.randint(1, max_d)
-            print(f"⏳ 随机延迟: 等待 {delay_sec//60} 分钟 {delay_sec % 60} 秒后开始执行")
-            time.sleep(delay_sec)
-    except Exception as e:
-        print(f"⚠️ 随机延迟异常: {e}")
+        delay = random.randint(1, int(os.getenv('MAX_RANDOM_DELAY', 3600)))
+        print(f"⏳ 随机延迟 {delay} 秒...")
+        time.sleep(delay)
+    except:
+        pass
 else:
     print("✅ 未开启随机延迟")
-
 
 cookie_list = get_all_cookies()
 all_results = []
 
+def get_continuous_days(session):
+    """ 从签到页面提取连续签到天数 """
+    try:
+        resp = session.get("https://bbs.ijingyi.com/dsu_paulsign-sign.html", timeout=15)
+        match = re.search(r'连续签到\s*(\d+)\s*天', resp.text)
+        return match.group(1) if match else "?"
+    except:
+        return "?"
+
 for idx, cookie in enumerate(cookie_list, 1):
     print(f"\n📌 开始处理第 {idx}/{len(cookie_list)} 个账号")
     session = requests.Session()
-
-    base_headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.69 Safari/537.36",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Cookie": cookie,
-        "Connection": "keep-alive",
-    }
-    session.headers.update(base_headers)
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Cookie": cookie
+    })
 
     try:
         # 获取 formhash
@@ -78,89 +60,53 @@ for idx, cookie in enumerate(cookie_list, 1):
         formhash = re.search(r'name="formhash" value="(.+?)"', resp1.text).group(1)
 
         # 执行签到
-        qiandao_url = "https://bbs.ijingyi.com/plugin.php?id=dsu_paulsign:sign&operation=qiandao&infloat=1"
-        post_data = {
-            "formhash": formhash, "submit": "1", "targerurl": "", "todaysay": "", "qdxq": "yl"
-        }
-        post_headers = base_headers.copy()
-        post_headers.update({
-            "Accept": "*/*",
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "X-Requested-With": "XMLHttpRequest",
-            "Origin": "https://bbs.ijingyi.com",
-            "Referer": sign_url,
-        })
-
-        resp2 = session.post(qiandao_url, data=post_data, headers=post_headers, timeout=15)
+        resp2 = session.post(
+            "https://bbs.ijingyi.com/plugin.php?id=dsu_paulsign:sign&operation=qiandao&infloat=1",
+            data={"formhash": formhash, "submit": "1", "qdxq": "yl"},
+            timeout=15
+        )
         content = resp2.text
 
-        # 判断结果
-        if '今天已经签到' in content or '已签到' in content or '您今日已经签到' in content:
+        # 签到结果判断
+        if '今天已签到' in content or '已签到' in content or '您今日已签到' in content:
             sign_result = "今日已签到"
             notify_flag = False
-        elif '签到成功' in content or '恭喜您' in content or '获得' in content:
-            sign_result = "✅ 签到成功"
-            notify_flag = True
         else:
-            sign_result = "❌ 签到失败或异常"
+            sign_result = "✅ 签到成功"
             notify_flag = True
 
         print(f"📢 签到结果: {sign_result}")
 
-        # 提取本次签到奖励
-        reward_text = "未检测到"
-        reward_match = re.search(r'获得\s*([^<。！]+)', content)
-        if reward_match:
-            reward_text = reward_match.group(1).strip()
+        # 从正确页面获取连续签到天数
+        streak_days = get_continuous_days(session)
 
-        # 从指定页面提取连续签到天数
-        streak_days = "N/A"
-        try:
-            streak_resp = session.get("https://bbs.ijingyi.com/dsu_paulsign-sign.html", headers=base_headers, timeout=15)
-            if streak_resp.status_code == 200:
-                streak_match = re.search(r'class="continuous"[^>]*>\s*连续签到\s*(\d+)\s*天', streak_resp.text)
-                if streak_match:
-                    streak_days = streak_match.group(1)
-        except:
-            pass
+        # ==================== 使用正确ID获取精币 ====================
+        credit_url = "https://bbs.ijingyi.com/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu"
+        credit_text = session.get(credit_url, timeout=15).text
 
-        # 获取精币（只取数字，去掉单位）
-        jb_val = "N/A"
-        try:
-            credit_url = "https://bbs.ijingyi.com/home.php?mod=spacecp&ac=credit&showcredit=1"
-            credit_resp = session.get(credit_url, headers=base_headers, timeout=15)
-            jb_match = re.search(r'精币: .*?>(.*?)<', credit_resp.text)
-            if jb_match:
-                jb_val = jb_match.group(1).replace('枚', '').strip()
-        except:
-            pass
+        # 精币对应的ID是 hcredit_4
+        jb_match = re.search(r'id="hcredit_4">([\d,]+)', credit_text)
+        jb_val = jb_match.group(1).replace(',', '') if jb_match else "N/A"
 
-        # ==================== 最终简洁输出格式 ====================
-        compact_line = (
-            f"当前账户 --- 【连续签到天数】：{streak_days} 天 "
-            f"--- 【签到奖励】：{reward_text} "
-            f"--- 【精币】：{jb_val} 枚"
-        )
+        points_msg = f"当前账户 --- 【连续签到天数】：{streak_days} 天 --- 【精币】：{jb_val} 枚"
+        print(points_msg)
 
-        print(compact_line)
-        all_results.append(f"账号{idx}: {sign_result}\n{compact_line}")
+        all_results.append(f"账号{idx}: {sign_result} | {points_msg}")
 
         if not notify_flag:
             print("ℹ️ 今日已签到，无需通知")
 
     except Exception as e:
-        print(f"❌ 账号{idx} 执行异常: {str(e)}")
+        print(f"❌ 账号{idx} 执行异常: {e}")
         all_results.append(f"账号{idx}: 签到失败（执行异常）")
 
-
-# 发送通知
+# 汇总通知
 if all_results:
-    summary = "\n\n".join(all_results)
+    summary = "\n".join(all_results)
     has_action = any("签到成功" in r or "签到失败" in r for r in all_results)
 
     if has_action and send:
-        send("精易论坛签到结果",
-             f"【精易论坛多账号签到完成】\n\n{summary}\n\n时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        send("精易论坛签到结果", f"【精易论坛多账号签到完成】\n\n{summary}\n\n时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         print("🎉 通知已发送")
     else:
         print("✅ 所有账号已签到，无需发送通知")
