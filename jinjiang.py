@@ -68,11 +68,11 @@ for idx, cookie in enumerate(cookies_list, 1):
         message = data.get("message", "")
         print(f"📢 返回信息: {message}")
 
-        # 尝试获取 signdays 和 coins
+        # 优先从 JSON 字段获取
         signdays = data.get("signdays")
         coins = data.get("coins")
 
-        # 如果没有，就尝试从 message 解析
+        # 如果 JSON 里没有，再尝试从 message 里解析
         if signdays is None:
             m = re.search(r'连续签到\s*(\d+)', message)
             signdays = m.group(1) if m else "?"
@@ -92,13 +92,13 @@ for idx, cookie in enumerate(cookies_list, 1):
             sign_result = "❌ 签到异常"
             notify_flag = True
 
-        # 输出
-        if signdays == "?" or coins == "?":
-            points_msg = f"{message}"
+        # 格式化输出
+        if signdays != "?" and coins != "?":
+            points_msg = f"您已连续签到 {signdays} 天，累计获得月石 {coins} 枚。"
         else:
-            points_msg = f"{message}！--- 您已连续签到{signdays}天，累计获得月石{coins}枚。"
+            points_msg = message
 
-        print(points_msg)
+        print(f"📊 {points_msg}")
 
         # 通知
         if notify_flag and send:
