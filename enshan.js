@@ -1,6 +1,6 @@
 // =============================================
 // 恩山无线论坛（right.com.cn）自动签到脚本
-// 版本: 2.8 - 使用精确恩山币接口 + 已签到显示今日积分
+// 版本: 2.9 - 修复今日积分和连续签到天数提取
 // =============================================
 // cron: 0 8,15 * * *
 // new Env('恩山签到');
@@ -13,17 +13,18 @@ const RANDOM_SIGNIN = process.env.RANDOM_SIGNIN === 'true';
 const MAX_RANDOM_DELAY = parseInt(process.env.MAX_RANDOM_DELAY) || 3600;
 
 function extractValue(html, className) {
-    const regex = new RegExp(`class="${className}">(\d+)<`);
+    // 支持 <span class="xxx">\u6570字</span> 结构
+    const regex = new RegExp(`class="${className}">\\s*(\\d+)`, 'i');
     const match = html.match(regex);
     return match ? match[1] : '?';
 }
 
 function extractEnshanCoins(html) {
-    let match = html.match(/id="hcredit_2">(\d+)\u5e01/);
+    let match = html.match(/id="hcredit_2">(\\d+)\u5e01/);
     if (match) return match[1];
-    match = html.match(/恩山币[:：]?\s*(\d+)/);
+    match = html.match(/恩山币[:：]?\s*(\\d+)/);
     if (match) return match[1];
-    match = html.match(/<span[^>]*>(\d+)<\/span>\s*币/);
+    match = html.match(/<span[^>]*>(\\d+)<\/span>\\s*币/);
     return match ? match[1] : '?';
 }
 
@@ -60,7 +61,7 @@ function parseCookies(cookieInput) {
         const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
 
         try {
-            // 获取签到页信息
+            // 轻量检查是否已签到
             const checkRes = await fetch(`${FORUM_BASE}/erling_qd-sign_in.html`, {
                 headers: { cookie: cookieHeader }
             });
@@ -70,7 +71,7 @@ function parseCookies(cookieInput) {
             const continuous = extractValue(checkHtml, 'erqd-continuous-days');
 
             if (checkHtml.includes('disabled>已签到</button>') || checkHtml.includes('已签到</button>')) {
-                // 使用精确接口获取恩山币
+                // 已签到 → 获取恩山币
                 const creditRes = await fetch(
                     `${FORUM_BASE}/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu`,
                     { headers: { cookie: cookieHeader } }
@@ -83,7 +84,7 @@ function parseCookies(cookieInput) {
                 continue;
             }
 
-            // 未签到 → Puppeteer 点击
+            // 未签到 → 启动浏览器点击
             console.log('🚀 启动浏览器...');
             const browser = await puppeteer.launch({
                 executablePath: '/usr/bin/chromium-browser',
@@ -104,12 +105,12 @@ function parseCookies(cookieInput) {
             if (!clicked) throw new Error('未找到签到按钮');
 
             console.log('✅ 已点击签到按钮');
-            await new Promise(r => setTimeout(r, 4000));
+            await new Promise(r => setTimeout(r, 5000));
 
             console.log('🔚 关闭浏览器');
             await browser.close();
 
-            // 签到后获取数据
+            // 签到后重新获取数据
             const resultRes = await fetch(`${FORUM_BASE}/erling_qd-sign_in.html`, {
                 headers: { cookie: cookieHeader }
             });
@@ -118,7 +119,7 @@ function parseCookies(cookieInput) {
             const newTodayPoint = extractValue(resultHtml, 'erqd-current-point');
             const newContinuous = extractValue(resultHtml, 'erqd-continuous-days');
 
-            // 使用精确接口获取恩山币
+            // 获取恩山币
             const creditRes = await fetch(
                 `${FORUM_BASE}/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu`,
                 { headers: { cookie: cookieHeader } }
