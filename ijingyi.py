@@ -50,8 +50,8 @@ def get_sign_info(session):
         streak_match = re.search(r'连续签到\s*(\d+)\s*天', text)
         streak_days = streak_match.group(1) if streak_match else "?"
 
-        # 上次获得奖励 - 更健壮的正则
-        reward_match = re.search(r'上次获得奖励：.*?(\d+).*?精币', text, re.DOTALL)
+        # 上次获得奖励 - 显式匹配 <b>1</b>
+        reward_match = re.search(r'上次获得奖励：.*?<b>(\d+)</b>.*?精币', text, re.DOTALL)
         last_reward = reward_match.group(1) if reward_match else "?"
 
         return streak_days, last_reward
