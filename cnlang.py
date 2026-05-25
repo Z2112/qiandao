@@ -34,9 +34,13 @@ def get_flare_solution(url, cookie_str):
     try:
         resp = requests.post(FLARESOLVERR_URL, json=payload, timeout=75)
         data = resp.json()
-        return data.get("solution") if data.get("status") == "ok" else None
+        if data.get("status") == "ok":
+            return data.get("solution")
+        else:
+            print(f"❌ FlareSolverr 返回失败: {data.get('message', '未知错误')}")
+            return None
     except Exception as e:
-        print("❌ FlareSolverr 调用失败:", e)
+        print(f"❌ FlareSolverr 调用失败: {e}")
         return None
 
 
