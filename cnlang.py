@@ -18,35 +18,26 @@ def parse_cookie_to_list(cookie_str):
             for item in cookie_str.split(';') if '=' in item]
 
 
-def get_flare_solution(url, cookie_str, max_retries=3):
+def get_flare_solution(url, cookie_str):
     if not FLARESOLVERR_URL:
         print("错误：未设置 FLARESOLVERR_URL")
         return None
 
-    for attempt in range(1, max_retries + 1):
-        print(f"🔄 正在通过 FlareSolverr 解决 Cloudflare 保护... (第 {attempt}/{max_retries} 次)")
-        payload = {
-            "cmd": "request.get",
-            "url": url,
-            "maxTimeout": 60000,
-            "session": "cnlang_qd",
-            "cookies": parse_cookie_to_list(cookie_str)
-        }
-        try:
-            resp = requests.post(FLARESOLVERR_URL, json=payload, timeout=75)
-            data = resp.json()
-            if data.get("status") == "ok":
-                return data.get("solution")
-            else:
-                print(f"⚠️ FlareSolverr 第 {attempt} 次返回失败: {data.get('message', '未知错误')}")
-        except Exception as e:
-            print(f"❌ FlareSolverr 第 {attempt} 次调用失败: {e}")
-
-        if attempt < max_retries:
-            time.sleep(8)  # 重试间隔
-
-    print("❌ FlareSolverr 重试 3 次后仍然失败")
-    return None
+    print("🔄 正在通过 FlareSolverr 解决 Cloudflare 保护...")
+    payload = {
+        "cmd": "request.get",
+        "url": url,
+        "maxTimeout": 60000,
+        "session": "cnlang_qd",
+        "cookies": parse_cookie_to_list(cookie_str)
+    }
+    try:
+        resp = requests.post(FLARESOLVERR_URL, json=payload, timeout=75)
+        data = resp.json()
+        return data.get("solution") if data.get("status") == "ok" else None
+    except Exception as e:
+        print("❌ FlareSolverr 调用失败:", e)
+        return None
 
 
 def set_cookies(session, cookies, user_agent):
@@ -112,10 +103,9 @@ def main():
         print(f"\n📌 处理第 {idx}/{len(cookie_list)} 个账号")
 
         try:
-            # ==================== FlareSolverr 重试逻辑 ====================
-            solution = get_flare_solution(SIGNIN_URL, cookie_str, max_retries=3)
+            solution = get_flare_solution(SIGNIN_URL, cookie_str)
             if not solution:
-                all_results.append(f"账号{idx}: FlareSolverr 重试3次后失败")
+                all_results.append(f"账号{idx}: FlareSolverr 调用失败")
                 continue
 
             session = requests.Session()
