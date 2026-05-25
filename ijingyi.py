@@ -45,6 +45,20 @@ def get_continuous_days(session):
     except:
         return "?"
 
+def get_last_reward(credit_text):
+    """ 从积分页面提取上次获得的签到奖励 """
+    try:
+        # 尝试从信用页或签到记录中提取
+        match = re.search(r'上次获得.*?(\d+)\s*精币', credit_text)
+        if match:
+            return match.group(1)
+        match = re.search(r'签到奖励.*?(\d+)', credit_text)
+        if match:
+            return match.group(1)
+        return "?"
+    except:
+        return "?"
+
 for idx, cookie in enumerate(cookie_list, 1):
     print(f"\n📌 开始处理第 {idx}/{len(cookie_list)} 个账号")
     session = requests.Session()
@@ -80,18 +94,20 @@ for idx, cookie in enumerate(cookie_list, 1):
         # 从正确页面获取连续签到天数
         streak_days = get_continuous_days(session)
 
-        # ==================== 使用正确ID获取精币 ====================
+        # 获取精币和上次奖励
         credit_url = "https://bbs.ijingyi.com/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu"
         credit_text = session.get(credit_url, timeout=15).text
 
-        # 精币对应的ID是 hcredit_4
         jb_match = re.search(r'id="hcredit_4">([\d,]+)', credit_text)
         jb_val = jb_match.group(1).replace(',', '') if jb_match else "N/A"
 
-        points_msg = f"当前账户 --- 【连续签到天数】：{streak_days} 天 --- 【精币】：{jb_val} 枚"
-        print(points_msg)
+        last_reward = get_last_reward(credit_text)
 
-        all_results.append(f"账号{idx}: {sign_result} | {points_msg}")
+        # 紧凑日志样式（参考 enshan.js）
+        log_line = f"账号{idx}: {sign_result} | 连续签到{streak_days}天 | 上次获得奖励: {last_reward}精币 | 精币: {jb_val}"
+        print(log_line)
+
+        all_results.append(log_line)
 
         if not notify_flag:
             print("ℹ️ 今日已签到，无需通知")
@@ -100,7 +116,7 @@ for idx, cookie in enumerate(cookie_list, 1):
         print(f"❌ 账号{idx} 执行异常: {e}")
         all_results.append(f"账号{idx}: 签到失败（执行异常）")
 
-# 汇总通知
+# 汇总通知（参考 enshan.js 风格）
 if all_results:
     summary = "\n".join(all_results)
     has_action = any("签到成功" in r or "签到失败" in r for r in all_results)
