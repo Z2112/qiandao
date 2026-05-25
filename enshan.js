@@ -64,7 +64,7 @@ function parseCookies(cookieInput) {
         console.log(`\n📌 处理第 ${i + 1}/${cookieStrings.length} 个账号`);
 
         const cookies = parseCookies(cookieStr);
-        const cookieHeader = coins.map(c => `${c.name}=${c.value}`).join('; ');
+        const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
 
         try {
             // 轻量检查是否已签到
