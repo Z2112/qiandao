@@ -36,28 +36,27 @@ else:
 cookie_list = get_all_cookies()
 all_results = []
 
-def get_continuous_days(session):
-    """ 从签到页面提取连续签到天数 """
+def get_sign_info(session):
+    """
+    从签到页面一次性提取：
+    - 连续签到天数
+    - 上次获得奖励（精币）
+    """
     try:
         resp = session.get("https://bbs.ijingyi.com/dsu_paulsign-sign.html", timeout=15)
-        match = re.search(r'连续签到\s*(\d+)\s*天', resp.text)
-        return match.group(1) if match else "?"
-    except:
-        return "?"
+        text = resp.text
 
-def get_last_reward(credit_text):
-    """ 从积分页面提取上次获得的签到奖励 """
-    try:
-        # 尝试从信用页或签到记录中提取
-        match = re.search(r'上次获得.*?(\d+)\s*精币', credit_text)
-        if match:
-            return match.group(1)
-        match = re.search(r'签到奖励.*?(\d+)', credit_text)
-        if match:
-            return match.group(1)
-        return "?"
+        # 连续签到天数
+        streak_match = re.search(r'连续签到\s*(\d+)\s*天', text)
+        streak_days = streak_match.group(1) if streak_match else "?"
+
+        # 上次获得奖励
+        reward_match = re.search(r'上次获得奖励：.*?(\d+)\s*精币', text)
+        last_reward = reward_match.group(1) if reward_match else "?"
+
+        return streak_days, last_reward
     except:
-        return "?"
+        return "?", "?"
 
 for idx, cookie in enumerate(cookie_list, 1):
     print(f"\n📌 开始处理第 {idx}/{len(cookie_list)} 个账号")
@@ -91,19 +90,16 @@ for idx, cookie in enumerate(cookie_list, 1):
 
         print(f"📢 签到结果: {sign_result}")
 
-        # 从正确页面获取连续签到天数
-        streak_days = get_continuous_days(session)
+        # 从签到页面获取连续天数 + 上次奖励
+        streak_days, last_reward = get_sign_info(session)
 
-        # 获取精币和上次奖励
+        # 获取当前精币
         credit_url = "https://bbs.ijingyi.com/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu"
         credit_text = session.get(credit_url, timeout=15).text
-
         jb_match = re.search(r'id="hcredit_4">([\d,]+)', credit_text)
         jb_val = jb_match.group(1).replace(',', '') if jb_match else "N/A"
 
-        last_reward = get_last_reward(credit_text)
-
-        # 紧凑日志样式（参考 enshan.js）
+        # 紧凑日志样式
         log_line = f"账号{idx}: {sign_result} | 连续签到{streak_days}天 | 上次获得奖励: {last_reward}精币 | 精币: {jb_val}"
         print(log_line)
 
@@ -116,7 +112,7 @@ for idx, cookie in enumerate(cookie_list, 1):
         print(f"❌ 账号{idx} 执行异常: {e}")
         all_results.append(f"账号{idx}: 签到失败（执行异常）")
 
-# 汇总通知（参考 enshan.js 风格）
+# 汇总通知
 if all_results:
     summary = "\n".join(all_results)
     has_action = any("签到成功" in r or "签到失败" in r for r in all_results)
