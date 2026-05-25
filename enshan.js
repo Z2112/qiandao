@@ -1,6 +1,6 @@
 // =============================================
 // 恩山无线论坛（right.com.cn）自动签到脚本
-// 版本: 2.9 - 修复今日积分和连续签到天数提取
+// 版本: 3.0 - 修复恩山币提取失败问题
 // =============================================
 // cron: 0 8,15 * * *
 // new Env('恩山签到');
@@ -13,19 +13,25 @@ const RANDOM_SIGNIN = process.env.RANDOM_SIGNIN === 'true';
 const MAX_RANDOM_DELAY = parseInt(process.env.MAX_RANDOM_DELAY) || 3600;
 
 function extractValue(html, className) {
-    // 支持 <span class="xxx">\u6570字</span> 结构
     const regex = new RegExp(`class="${className}">\\s*(\\d+)`, 'i');
     const match = html.match(regex);
     return match ? match[1] : '?';
 }
 
 function extractEnshanCoins(html) {
-    let match = html.match(/id="hcredit_2">(\\d+)\u5e01/);
+    // 优先匹配 id="hcredit_2" (最准确)
+    let match = html.match(/id="hcredit_2">\s*(\d+)\s*币/i);
     if (match) return match[1];
-    match = html.match(/恩山币[:：]?\s*(\\d+)/);
+
+    // 匹配 “恩山币: 1453币” 或 “恩山币：1453币”
+    match = html.match(/恩山币[:：]?\s*(\d+)\s*币/i);
     if (match) return match[1];
-    match = html.match(/<span[^>]*>(\\d+)<\/span>\\s*币/);
-    return match ? match[1] : '?';
+
+    // 通用 span 匹配
+    match = html.match(/<span[^>]*>(\d+)\s*币<\/span>/i);
+    if (match) return match[1];
+
+    return '?';
 }
 
 function getAllCookies() {
@@ -58,7 +64,7 @@ function parseCookies(cookieInput) {
         console.log(`\n📌 处理第 ${i + 1}/${cookieStrings.length} 个账号`);
 
         const cookies = parseCookies(cookieStr);
-        const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        const cookieHeader = coins.map(c => `${c.name}=${c.value}`).join('; ');
 
         try {
             // 轻量检查是否已签到
@@ -143,7 +149,7 @@ function parseCookies(cookieInput) {
             `【恩山多账号签到完成】\n\n${allResults.join('\n')}\n\n时间: ${new Date().toLocaleString('zh-CN')}`);
         console.log('🎉 通知已发送');
     } else {
-        console.log('✅ 所有账号已签到，无需通知');
+        console.log('✅ 所有账号已签到，无需发送通知');
     }
 
     console.log('🔚 全部任务执行完毕');
