@@ -102,6 +102,7 @@ def main():
 
     cookie_list = get_all_cookies()
     all_results = []
+    has_notification = False   # 是否需要发送通知
 
     for idx, cookie_str in enumerate(cookie_list, 1):
         print(f"\n📌 处理第 {idx}/{len(cookie_list)} 个账号")
@@ -109,7 +110,10 @@ def main():
         try:
             solution = get_flare_solution(SIGNIN_URL, cookie_str)
             if not solution:
-                all_results.append(f"账号{idx}: FlareSolverr 调用失败")
+                result = f"账号{idx}: FlareSolverr 调用失败"
+                print(result)
+                all_results.append(result)
+                has_notification = True   # 失败也要通知
                 continue
 
             session = requests.Session()
@@ -139,13 +143,16 @@ def main():
 
                 print(result)
                 all_results.append(result)
-                continue
+                continue   # 已签到不触发通知
 
             # ==================== 执行签到 ====================
             soup = BeautifulSoup(html, "html.parser")
             formhash_tag = soup.find("input", {"name": "formhash"})
             if not formhash_tag:
-                all_results.append(f"账号{idx}: 未找到 formhash")
+                result = f"账号{idx}: 未找到 formhash"
+                print(result)
+                all_results.append(result)
+                has_notification = True
                 continue
 
             formhash = formhash_tag.get("value")
@@ -175,18 +182,25 @@ def main():
 
             print(result_text)
             all_results.append(result_text)
-
-            if "已经签到" not in result_text:
-                send("国语视界签到", result_text)
+            has_notification = True   # 成功签到需要通知
 
         except Exception as e:
             error_msg = f"账号{idx} 执行异常: {str(e)}"
             print(error_msg)
             all_results.append(error_msg)
+            has_notification = True   # 异常也要通知
 
+    # ==================== 最终通知 ====================
     if all_results:
         print("\n【国语视界签到】结果汇总：")
         print("\n".join(all_results))
+
+        if has_notification and send:
+            summary = "\n".join(all_results)
+            send("国语视界签到", f"【国语视界签到结果】\n\n{summary}")
+            print("🎉 通知已发送")
+        else:
+            print("ℹ️ 无需发送通知（全部为今日已签到）")
 
     print("【国语视界签到】任务执行完毕")
 
