@@ -1,6 +1,6 @@
 // =============================================
 // 恩山无线论坛（right.com.cn）自动签到脚本
-// 版本: 3.0 - 修复恩山币提取失败问题
+// 版本: 3.2 - 修复正则转义 + 浏览器未关闭问题
 // =============================================
 // cron: 0 8,15 * * *
 // new Env('恩山签到');
@@ -19,15 +19,12 @@ function extractValue(html, className) {
 }
 
 function extractEnshanCoins(html) {
-    // 优先匹配 id="hcredit_2" (最准确)
     let match = html.match(/id="hcredit_2">\s*(\d+)\s*币/i);
     if (match) return match[1];
 
-    // 匹配 “恩山币: 1453币” 或 “恩山币：1453币”
     match = html.match(/恩山币[:：]?\s*(\d+)\s*币/i);
     if (match) return match[1];
 
-    // 通用 span 匹配
     match = html.match(/<span[^>]*>(\d+)\s*币<\/span>/i);
     if (match) return match[1];
 
@@ -67,7 +64,6 @@ function parseCookies(cookieInput) {
         const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
 
         try {
-            // 轻量检查是否已签到
             const checkRes = await fetch(`${FORUM_BASE}/erling_qd-sign_in.html`, {
                 headers: { cookie: cookieHeader }
             });
@@ -77,7 +73,6 @@ function parseCookies(cookieInput) {
             const continuous = extractValue(checkHtml, 'erqd-continuous-days');
 
             if (checkHtml.includes('disabled>已签到</button>') || checkHtml.includes('已签到</button>')) {
-                // 已签到 → 获取恩山币
                 const creditRes = await fetch(
                     `${FORUM_BASE}/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu`,
                     { headers: { cookie: cookieHeader } }
@@ -90,59 +85,81 @@ function parseCookies(cookieInput) {
                 continue;
             }
 
-            // 未签到 → 启动浏览器点击
             console.log('🚀 启动浏览器...');
-            const browser = await puppeteer.launch({
-                executablePath: '/usr/bin/chromium-browser',
-                headless: true,
-                args: ['--no-sandbox', '--disable-setuid-sandbox']
-            });
+            let browser;
 
-            const page = await browser.newPage();
-            await page.setCookie(...cookies);
-            await page.goto(`${FORUM_BASE}/erling_qd-sign_in.html`, { waitUntil: 'networkidle2' });
+            try {
+                browser = await puppeteer.launch({
+                    executablePath: '/usr/bin/chromium-browser',
+                    headless: true,
+                    args: [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage'
+                    ]
+                });
 
-            const clicked = await page.evaluate(() => {
-                const btn = document.getElementById('signin-btn');
-                if (btn) { btn.click(); return true; }
-                return false;
-            });
+                const page = await browser.newPage();
+                await page.setCookie(...cookies);
+                await page.goto(`${FORUM_BASE}/erling_qd-sign_in.html`, { 
+                    waitUntil: 'domcontentloaded',
+                    timeout: 30000 
+                });
 
-            if (!clicked) throw new Error('未找到签到按钮');
+                const clicked = await page.evaluate(() => {
+                    const btn = document.getElementById('signin-btn');
+                    if (btn) { btn.click(); return true; }
+                    return false;
+                });
 
-            console.log('✅ 已点击签到按钮');
-            await new Promise(r => setTimeout(r, 5000));
+                if (!clicked) throw new Error('未找到签到按钮');
 
-            console.log('🔚 关闭浏览器');
-            await browser.close();
+                console.log('✅ 已点击签到按钮');
 
-            // 签到后重新获取数据
-            const resultRes = await fetch(`${FORUM_BASE}/erling_qd-sign_in.html`, {
-                headers: { cookie: cookieHeader }
-            });
-            const resultHtml = await resultRes.text();
+                await page.waitForNavigation({ 
+                    waitUntil: 'domcontentloaded', 
+                    timeout: 10000 
+                }).catch(() => {});
 
-            const newTodayPoint = extractValue(resultHtml, 'erqd-current-point');
-            const newContinuous = extractValue(resultHtml, 'erqd-continuous-days');
+                console.log('🔚 关闭浏览器');
 
-            // 获取恩山币
-            const creditRes = await fetch(
-                `${FORUM_BASE}/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu`,
-                { headers: { cookie: cookieHeader } }
-            );
-            const creditHtml = await creditRes.text();
-            const enshanCoins = extractEnshanCoins(creditHtml);
+            } catch (err) {
+                console.error(`❌ 账号${i + 1} 失败:`, err.message);
+                allResults.push(`账号${i + 1}: 签到失败`);
+            } finally {
+                if (browser) {
+                    await browser.close().catch(() => {});
+                }
+            }
 
-            console.log(`✅ 签到成功 | 今日积分+${newTodayPoint} | 连续${newContinuous}天 | 恩山币: ${enshanCoins}`);
-            allResults.push(`账号${i + 1}: 签到成功 | 今日积分+${newTodayPoint} | 连续${newContinuous}天 | 恩山币: ${enshanCoins}`);
+            if (!allResults.some(r => r.includes(`账号${i + 1}`))) {
+                const resultRes = await fetch(`${FORUM_BASE}/erling_qd-sign_in.html`, {
+                    headers: { cookie: cookieHeader }
+                });
+                const resultHtml = await resultRes.text();
+
+                const newTodayPoint = extractValue(resultHtml, 'erqd-current-point');
+                const newContinuous = extractValue(resultHtml, 'erqd-continuous-days');
+
+                const creditRes = await fetch(
+                    `${FORUM_BASE}/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu`,
+                    { headers: { cookie: cookieHeader } }
+                );
+                const creditHtml = await creditRes.text();
+                const enshanCoins = extractEnshanCoins(creditHtml);
+
+                console.log(`✅ 签到成功 | 今日积分+${newTodayPoint} | 连续${newContinuous}天 | 恩山币: ${enshanCoins}`);
+                allResults.push(`账号${i + 1}: 签到成功 | 今日积分+${newTodayPoint} | 连续${newContinuous}天 | 恩山币: ${enshanCoins}`);
+            }
 
         } catch (err) {
             console.error(`❌ 账号${i + 1} 失败:`, err.message);
-            allResults.push(`账号${i + 1}: 签到失败`);
+            if (!allResults.some(r => r.includes(`账号${i + 1}`))) {
+                allResults.push(`账号${i + 1}: 签到失败`);
+            }
         }
     }
 
-    // 发送通知
     const hasAction = allResults.some(r => r.includes('签到成功') || r.includes('签到失败'));
     if (hasAction && allResults.length > 0) {
         await notify.sendNotify('恩山无线论坛签到结果',
