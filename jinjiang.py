@@ -49,63 +49,87 @@ def get_headers(cookie):
     }
 
 for idx, cookie in enumerate(cookies_list, 1):
-    print(f"\n📌 第 {idx} 个账号")
+    print(f"\n{'='*50}")
+    print(f"📌 第 {idx} 个账号")
     masked = cookie[:12] + "..." + cookie[-8:] if len(cookie) > 20 else cookie
 
     try:
         headers = get_headers(cookie)
 
-        # 签到接口
         resp = requests.get("https://m.jjwxc.net/my/signIn", headers=headers, timeout=15)
         data = resp.json()
 
         message = data.get("message", "")
         print(f"📢 返回信息: {message}")
 
-        # 优先从 JSON 字段获取
-        signdays = data.get("signdays")
-        coins = data.get("coins")
+        # ====================== 判断是否已签到 ======================
+        is_already_signed = (
+            "当天已经签到" in message or 
+            "不需要重复签到" in message or 
+            "70003" in str(message)
+        )
 
-        # 兜底从 message 提取
-        if signdays is None:
-            m = re.search(r'连续签到\s*(\d+)', message)
-            signdays = m.group(1) if m else None
-
-        if coins is None:
-            m = re.search(r'月石\s*(\d+)', message)
-            coins = m.group(1) if m else None
-
-        # 判断状态
-        if "当天已经签到" in message or "不需要重复签到" in message or "70003" in str(message):
+        if is_already_signed:
+            # 已签到：保持简洁，不提取连续签到天数
+            print("ℹ️ 今日已签到，无需重复操作")
             sign_result = "今日已签到"
             notify_flag = False
-        elif "签到成功" in message:
+
+        else:
+            # ====================== 只有签到成功时才提取连续签到 ======================
+            signdays = None
+            coins = data.get("coins")
+
+            # 尝试提取连续签到天数
+            possible_keys = ["signdays", "signDays", "continuousDays", "continuous_sign_days"]
+            for key in possible_keys:
+                if data.get(key):
+                    num = re.search(r'\d+', str(data.get(key)))
+                    if num:
+                        signdays = num.group()
+                        break
+
+            if signdays is None:
+                m = re.search(r'连续签到\s*(\d+)', message)
+                if m:
+                    signdays = m.group(1)
+
+            if coins is None:
+                m = re.search(r'月石\s*(\d+)', message)
+                if m:
+                    coins = m.group(1)
+
+            # 输出
+            if signdays:
+                print(f"🔥【连续签到】{signdays} 天")
+            if coins:
+                print(f"💎【月石余额】{coins} 枚")
+
+            if signdays and coins:
+                points_msg = f"🔥 连续签到 {signdays} 天，月石 {coins} 枚"
+            elif signdays:
+                points_msg = f"🔥 连续签到 {signdays} 天"
+            else:
+                points_msg = message
+
+            print(f"📊 {points_msg}")
+
             sign_result = "✅ 签到成功"
             notify_flag = True
-        else:
-            sign_result = "❌ 签到异常"
-            notify_flag = True
 
-        # 构造输出（更灵活）
-        if signdays and coins:
-            points_msg = f"您已连续签到 {signdays} 天，累计获得月石 {coins} 枚。"
-        elif signdays:
-            points_msg = f"{message}（连续签到 {signdays} 天）"
-        elif coins:
-            points_msg = f"{message}（月石 {coins} 枚）"
-        else:
-            points_msg = message
-
-        print(f"📊 {points_msg}")
-
-        # 通知
+        # ====================== 通知 ======================
         if notify_flag and send:
-            send("晋江文学城签到", f"账号: {masked}\n{sign_result}\n\n{points_msg}")
+            notify_content = f"账号: {masked}\n{sign_result}"
+            if 'points_msg' in locals():
+                notify_content += f"\n\n{points_msg}"
+            send("晋江文学城签到", notify_content)
 
         if not notify_flag:
             print("ℹ️ 今日已签到，无需通知")
 
     except Exception as e:
         print(f"❌ 执行异常: {e}")
+
+    print(f"{'='*50}")
 
 print("\n【晋江文学城签到】执行完毕")
