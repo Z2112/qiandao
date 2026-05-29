@@ -22,7 +22,6 @@ if not JINJIANG_COOKIE:
     print("❌ 未设置 JINJIANG_COOKIE 环境变量")
     sys.exit(1)
 
-# 随机延迟
 random_signin = os.getenv('RANDOM_SIGNIN', 'false').lower() == 'true'
 if random_signin:
     try:
@@ -55,14 +54,22 @@ for idx, cookie in enumerate(cookies_list, 1):
 
     try:
         headers = get_headers(cookie)
-
         resp = requests.get("https://m.jjwxc.net/my/signIn", headers=headers, timeout=15)
-        data = resp.json()
+        response = resp.json()
 
-        message = data.get("message", "")
+        # ====================== 保存完整返回 ======================
+        try:
+            with open("jinjiang_last_response.json", "w", encoding="utf-8") as f:
+                json.dump(response, f, ensure_ascii=False, indent=2)
+            print("📁 已保存完整返回 JSON 到: jinjiang_last_response.json")
+        except Exception as e:
+            print(f"⚠️ 保存失败: {e}")
+
+        # ====================== 正确解析结构 ======================
+        result = response.get("data", {})          # 真正的数据在这里
+        message = response.get("message", "")
         print(f"📢 返回信息: {message}")
 
-        # ====================== 判断是否已签到 ======================
         is_already_signed = (
             "当天已经签到" in message or 
             "不需要重复签到" in message or 
@@ -70,25 +77,16 @@ for idx, cookie in enumerate(cookies_list, 1):
         )
 
         if is_already_signed:
-            # 已签到：保持简洁，不提取连续签到天数
             print("ℹ️ 今日已签到，无需重复操作")
             sign_result = "今日已签到"
             notify_flag = False
 
         else:
-            # ====================== 只有签到成功时才提取连续签到 ======================
-            signdays = None
-            coins = data.get("coins")
+            # ====================== 正确提取 signdays 和 coins ======================
+            signdays = result.get("signdays")
+            coins = result.get("coins")
 
-            # 尝试提取连续签到天数
-            possible_keys = ["signdays", "signDays", "continuousDays", "continuous_sign_days"]
-            for key in possible_keys:
-                if data.get(key):
-                    num = re.search(r'\d+', str(data.get(key)))
-                    if num:
-                        signdays = num.group()
-                        break
-
+            # 兜底正则（兼容 message 里带天数的情况）
             if signdays is None:
                 m = re.search(r'连续签到\s*(\d+)', message)
                 if m:
@@ -117,7 +115,7 @@ for idx, cookie in enumerate(cookies_list, 1):
             sign_result = "✅ 签到成功"
             notify_flag = True
 
-        # ====================== 通知 ======================
+        # 通知
         if notify_flag and send:
             notify_content = f"账号: {masked}\n{sign_result}"
             if 'points_msg' in locals():
