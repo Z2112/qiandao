@@ -81,7 +81,7 @@ function parseCookies(cookieInput) {
                 const enshanCoins = extractEnshanCoins(creditHtml);
 
                 console.log(`✅ 已签到 | 今日积分+${todayPoint} | 连续${continuous}天 | 恩山币: ${enshanCoins}`);
-                allResults.push(`账号${i + 1}: 已签到 | 今日积分+${todayPoint} | 连续${continuous}天 | 恩山币: ${enshanCoins}`);
+                allResults.push(`账号${i + 1}: ✅ 已签到 | 今日积分+${todayPoint} | 连续${continuous}天 | 恩山币: ${enshanCoins}`);
                 continue;
             }
 

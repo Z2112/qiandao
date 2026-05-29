@@ -197,7 +197,7 @@ try:
     is_sign = data_sign.get("isSign", 0)
 
     if str(is_sign) == "1":
-        sign_result = "今日已签到"
+        sign_result = "✅ 今日已签到"
         notify_flag = False
     else:
         sign_result = f"✅ 签到成功，获得 {netdisk_bonus}M 空间"

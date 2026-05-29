@@ -78,7 +78,7 @@ for idx, cookie in enumerate(cookies_list, 1):
 
         if is_already_signed:
             print("ℹ️ 今日已签到，无需重复操作")
-            sign_result = "今日已签到"
+            sign_result = "✅ 今日已签到"
             notify_flag = False
 
         else:

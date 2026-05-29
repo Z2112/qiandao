@@ -81,7 +81,7 @@ for idx, cookie in enumerate(cookie_list, 1):
 
         # 签到结果判断
         if '今天已签到' in content or '已签到' in content or '您今日已签到' in content:
-            sign_result = "今日已签到"
+            sign_result = "✅ 今日已签到"
             notify_flag = False
         else:
             sign_result = "✅ 签到成功"

@@ -267,7 +267,7 @@ def main():
             msg_lines.append(f"✅ 账号{idx}: {info}")
             has_real_action = True
         elif status == "already":
-            msg_lines.append(f"🟡 账号{idx}: {info}")
+            msg_lines.append(f"✅ 账号{idx}: {info}")
         else:
             msg_lines.append(f"❌ 账号{idx}: {info}")
             has_real_action = True

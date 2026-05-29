@@ -145,7 +145,7 @@ def main():
                 except:
                     result = f"✅ 签到成功！当前金钱{new_money}"
             else:
-                result = "今日已签到（积分未变化）"
+                result = "✅ 今日已签到（积分未变化）"
 
             print(result)
             all_results.append({

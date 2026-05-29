@@ -131,7 +131,7 @@ def main():
                 stats = get_sign_stats(session, html)
                 money = get_current_money(session)
 
-                result = f"账号{idx}: 今日已签到 | 本月{stats.get('本月签到', '?')}天 | 累计{stats.get('累计签到', '?')}天"
+                result = f"账号{idx}: ✅ 今日已签到 | 本月{stats.get('本月签到', '?')}天 | 累计{stats.get('累计签到', '?')}天"
                 if stats.get('上次奖励'):
                     result += f" | 上次奖励: {stats['上次奖励']}"
                 if money:

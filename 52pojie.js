@@ -156,7 +156,7 @@ async function processAccount(cookieInput, accountIndex) {
 
   if (status === '已签到') {
     const credits = await getMyCreditsAPI(cookieInput);
-    return `今日已签到 | 吾爱币: ${credits || '未知'}`;
+    return `✅ 今日已签到 | 吾爱币: ${credits || '未知'}`;
   }
 
   // ==================== 未签到 → 执行签到 ====================
