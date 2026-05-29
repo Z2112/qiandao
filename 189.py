@@ -1,33 +1,34 @@
 """
 # ==================== 青龙面板使用说明（天翼云盘签到） ====================
 
-# 【脚本名称】 天翼云盘签到（支持登录 + 签到 + 两次抽奖）
+# 【脚本名称】 天翼云盘签到（纯 Cookie 方式）
 # 【cron 定时】 每天 10:00 执行（可自行修改）
-# 【环境变量】（必须设置以下两个变量）
-#    CLOUD189_USERNAME  → 你的天翼云盘手机号（或登录账号）
-#    CLOUD189_PASSWORD  → 你的天翼云盘登录密码
+# 【环境变量】（必须设置）
+#    CLOUD189_COOKIES  → 文本格式 Cookie（lt=xxx; STK=yyy; ...）
 # 【可选变量】
 #    RANDOM_SIGNIN      → true 开启随机延迟（默认 false）
 #    MAX_RANDOM_DELAY   → 最大随机延迟秒数（默认 3600 秒 = 1小时）
 # 【通知逻辑】 今日已签到 → 仅打印日志，不通知；签到成功或失败 → 通过青龙通知系统推送
 #
 # 【详细使用步骤】
-# 1. 青龙面板 → 依赖管理 → 新建 Python 依赖，依次添加以下两个依赖并安装：
-#       rsa
-#       requests
-# 2. 青龙面板 → 环境变量 → 新建变量，添加上面提到的 CLOUD189_USERNAME 和 CLOUD189_PASSWORD
-# 3. 青龙面板 → 定时任务 → 新建任务，脚本路径指向本文件（例如 task/189_signin.py）
-# 4. 保存后立即运行一次测试，查看日志是否显示“登录成功”和签到结果
-# 5. 如需修改执行时间，直接编辑任务的 cron 表达式即可
+#
+# 使用方式：
+# 1. 浏览器登录后使用 "Get cookies.txt LOCALLY" 扩展导出 Cookie
+# 2. 设置环境变量 CLOUD189_COOKIES（直接粘贴文本）
+# 3. 青龙定时任务直接运行本脚本
+
+# 青龙面板依赖：
+#   requests（必须）
 #
 # 【注意事项】
-# • 密码请使用青龙面板的“变量加密”功能（推荐）
-# • Cookie 不会持久化，每次运行都会重新登录，安全性较高
-# • 如果出现“登录失败”或“RSA加密异常”，请检查账号密码是否正确，或稍后重试
-# • 脚本完全基于官方 .har 流程实现，无需手动抓包
-#
-# 作者：Grok（根据用户提供的 .har 文件定制）
-# 更新日期：2026-05-20
+# • 本脚本**仅支持 Cookie 方式**，已完全移除手机号+密码登录相关代码
+# • 抽奖逻辑已替换为 dext7r/189pan 项目的改进版本（支持3次抽奖 + 更好错误判断）
+# • 如果在青龙 Docker 中运行失败，常见原因是缺少系统依赖，可尝试在容器内执行：
+#   apt-get update && apt-get install -y libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2
+
+# 作者：Grok
+# 更新日期：2026-05-29
+# 说明：纯 Cookie 模式，已移除所有用户名密码登录逻辑
 """
 
 # cron: 0 10 * * *
@@ -38,8 +39,7 @@ import sys
 import time
 import random
 import re
-import base64
-import rsa
+import json
 import requests
 
 # ==================== 通知模块 ====================
@@ -50,15 +50,64 @@ except ImportError:
 
 print("【天翼云盘签到】开始执行...")
 
-# ==================== 获取环境变量 ====================
-username = os.getenv('CLOUD189_USERNAME')
-password = os.getenv('CLOUD189_PASSWORD')
-if not username or not password:
-    msg = "❌ 未设置 CLOUD189_USERNAME 或 CLOUD189_PASSWORD 环境变量，请检查青龙面板变量配置"
-    print(msg)
-    if send:
-        send("天翼云盘签到", msg)
-    sys.exit(1)
+# ==================== Cookie 相关函数（文本模式） ====================
+
+def parse_cookie_string(cookie_str: str):
+    """将 'lt=xxx; STK=yyy; ...' 格式的 Cookie 字符串解析为 requests 可用的列表"""
+    cookies = []
+    if not cookie_str:
+        return cookies
+
+    cookie_str = cookie_str.strip().replace('\n', ' ').replace('\r', '')
+
+    for item in cookie_str.split(';'):
+        item = item.strip()
+        if '=' in item:
+            name, value = item.split('=', 1)
+            name = name.strip()
+            value = value.strip()
+            if name:
+                cookies.append({
+                    "name": name,
+                    "value": value,
+                    "domain": ".cloud.189.cn"
+                })
+    return cookies
+
+
+def load_cookies():
+    """仅从环境变量 CLOUD189_COOKIES 加载（纯文本格式）"""
+    cookies_env = os.getenv("CLOUD189_COOKIES")
+
+    if not cookies_env:
+        return None
+
+    cookies = parse_cookie_string(cookies_env.strip())
+    if cookies:
+        print("ℹ️ 从环境变量 CLOUD189_COOKIES 加载 Cookie")
+        return cookies
+
+    return None
+
+
+
+
+
+def create_session_from_cookies(cookies):
+    """根据 Cookie 列表创建带登录状态的 requests.Session"""
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    })
+
+    for cookie in cookies:
+        name = cookie.get("name")
+        value = cookie.get("value")
+        domain = cookie.get("domain")
+        if name and value:
+            session.cookies.set(name, value, domain=domain)
+    return session
+
 
 # ==================== 随机延迟（可选） ====================
 random_signin = os.getenv('RANDOM_SIGNIN', 'false').lower() == 'true'
@@ -78,156 +127,101 @@ if random_signin:
 else:
     print("✅ 未开启随机延迟（RANDOM_SIGNIN 未设置为 true）")
 
-# ==================== RSA 加密辅助函数 ====================
-BI_RM = list("0123456789abcdefghijklmnopqrstuvwxyz")
-B64MAP = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
-def int2char(a):
-    return BI_RM[a]
-
-def b64tohex(a):
-    d, e, c = "", 0, 0
-    for i in range(len(a)):
-        if a[i] != "=":
-            v = B64MAP.index(a[i])
-            if e == 0:
-                e = 1
-                d += int2char(v >> 2)
-                c = 3 & v
-            elif e == 1:
-                e = 2
-                d += int2char(c << 2 | v >> 4)
-                c = 15 & v
-            elif e == 2:
-                e = 3
-                d += int2char(c)
-                d += int2char(v >> 2)
-                c = 3 & v
-            else:
-                e = 0
-                d += int2char(c << 2 | v >> 4)
-                d += int2char(15 & v)
-    if e == 1:
-        d += int2char(c << 2)
-    return d
-
-def rsa_encode(j_rsakey, string):
-    rsa_key = f"-----BEGIN PUBLIC KEY-----\n{j_rsakey}\n-----END PUBLIC KEY-----"
-    pubkey = rsa.PublicKey.load_pkcs1_openssl_pem(rsa_key.encode())
-    result = b64tohex(base64.b64encode(rsa.encrypt(str(string).encode(), pubkey)).decode())
-    return result
-
-# ==================== 登录函数 ====================
-def login(uname, pwd):
-    s = requests.Session()
-    # 第一步：获取登录跳转地址
-    url_token = "https://m.cloud.189.cn/udb/udb_login.jsp?pageId=1&pageKey=default&clientType=wap&redirectURL=https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html"
-    r = s.get(url_token, timeout=15)
-    match = re.search(r"https?://[^\s'\"]+", r.text)
-    if not match:
-        raise Exception("获取登录页面失败")
-    url = match.group()
-
-    r = s.get(url, timeout=15)
-    match = re.search(r'<a id="j-tab-login-link"[^>]*href="([^"]+)"', r.text)
-    if not match:
-        raise Exception("获取登录链接失败")
-    href = match.group(1)
-
-    r = s.get(href, timeout=15)
-    captcha_token = re.findall(r"captchaToken' value='(.+?)'", r.text)[0]
-    lt = re.findall(r'lt = "(.+?)"', r.text)[0]
-    return_url = re.findall(r"returnUrl= '(.+?)'", r.text)[0]
-    param_id = re.findall(r'paramId = "(.+?)"', r.text)[0]
-    j_rsakey = re.findall(r'j_rsaKey" value="(\S+)"', r.text, re.M)[0]
-
-    s.headers.update({"lt": lt})
-
-    # RSA 加密
-    enc_uname = rsa_encode(j_rsakey, uname)
-    enc_pwd = rsa_encode(j_rsakey, pwd)
-
-    # 提交登录
-    login_url = "https://open.e.189.cn/api/logbox/oauth2/loginSubmit.do"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:74.0) Gecko/20100101 Firefox/76.0",
-        "Referer": "https://open.e.189.cn/",
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
-    data = {
-        "appKey": "cloud",
-        "accountType": "01",
-        "userName": f"{{RSA}}{enc_uname}",
-        "password": f"{{RSA}}{enc_pwd}",
-        "validateCode": "",
-        "captchaToken": captcha_token,
-        "returnUrl": return_url,
-        "mailSuffix": "@189.cn",
-        "paramId": param_id,
-        "dynamicCheck": "FALSE"
-    }
-    r = s.post(login_url, data=data, headers=headers, timeout=15)
-    resp_json = r.json()
-    if resp_json.get("result") != 0:
-        raise Exception(f"登录失败: {resp_json.get('msg', '未知错误')}")
-
-    # 登录成功跳转
-    redirect_url = resp_json.get("toUrl")
-    if redirect_url:
-        s.get(redirect_url, timeout=15)
-    return s
-
 # ==================== 主流程 ====================
-try:
-    session = login(username, password)
-    print("✅ 登录成功")
+def main():
+    try:
+        cookies = load_cookies()
 
-    # 签到
-    timestamp = str(round(time.time() * 1000))
-    sign_url = f"https://api.cloud.189.cn/mkt/userSign.action?rand={timestamp}&clientType=TELEANDROID&version=8.6.3&model=SM-G930K"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 5.1.1; SM-G930K Build/NRD90M; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile Safari/537.36 Ecloud/8.6.3 Android/22 clientId/355325117317828 clientModel/SM-G930K imsi/460071114317824 clientChannelId/qq proVersion/1.0.6",
-        "Referer": "https://m.cloud.189.cn/zhuanti/2016/sign/index.jsp?albumBackupOpened=1",
-        "Host": "m.cloud.189.cn"
-    }
+        if not cookies:
+            print("❌ 未检测到 CLOUD189_COOKIES 环境变量。")
+            print("   请设置环境变量 CLOUD189_COOKIES（文本格式：lt=xxx; STK=yyy; ...）")
+            sys.exit(1)
 
-    resp_sign = session.get(sign_url, headers=headers, timeout=15)
-    data_sign = resp_sign.json()
-    netdisk_bonus = data_sign.get("netdiskBonus", 0)
-    is_sign = data_sign.get("isSign", 0)
+        print("✅ 使用 Cookie 方式执行")
+        session = create_session_from_cookies(cookies)
 
-    if str(is_sign) == "1":
-        sign_result = "✅ 今日已签到"
-        notify_flag = False
-    else:
-        sign_result = f"✅ 签到成功，获得 {netdisk_bonus}M 空间"
-        notify_flag = True
+        print("✅ 会话准备完成，开始执行签到...")
 
-    print(f"📢 签到结果: {sign_result}")
+        # 签到
+        timestamp = str(round(time.time() * 1000))
+        sign_url = f"https://api.cloud.189.cn/mkt/userSign.action?rand={timestamp}&clientType=TELEANDROID&version=8.6.3&model=SM-G930K"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 5.1.1; SM-G930K Build/NRD90M; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile Safari/537.36 Ecloud/8.6.3 Android/22 clientId/355325117317828 clientModel/SM-G930K imsi/460071114317824 clientChannelId/qq proVersion/1.0.6",
+            "Referer": "https://m.cloud.189.cn/zhuanti/2016/sign/index.jsp?albumBackupOpened=1",
+            "Host": "m.cloud.189.cn"
+        }
 
-    # 抽奖1 + 抽奖2
-    draw_headers = headers.copy()
-    draw1 = session.get("https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN&activityId=ACT_SIGNIN", headers=draw_headers, timeout=15)
-    draw2 = session.get("https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN_PHOTOS&activityId=ACT_SIGNIN", headers=draw_headers, timeout=15)
+        resp_sign = session.get(sign_url, headers=headers, timeout=15)
+        data_sign = resp_sign.json()
+        netdisk_bonus = data_sign.get("netdiskBonus", 0)
+        is_sign = data_sign.get("isSign", 0)
 
-    prize1 = draw1.json().get("prizeName", "无奖品") if draw1.ok else "抽奖失败"
-    prize2 = draw2.json().get("prizeName", "无奖品") if draw2.ok else "抽奖失败"
+        if str(is_sign) == "1":
+            sign_result = "✅ 今日已签到"
+            notify_flag = False
+        else:
+            sign_result = f"✅ 签到成功，获得 {netdisk_bonus}M 空间"
+            notify_flag = True
 
-    result_msg = f"{sign_result}\n第一次抽奖: {prize1}\n第二次抽奖: {prize2}"
-    print(result_msg)
+        print(f"📢 签到结果: {sign_result}")
 
-    # ==================== 通知 ====================
-    if notify_flag and send:
-        title = "✅ 天翼云盘签到成功" if "签到成功" in sign_result else "❌ 天翼云盘签到失败"
-        send(title, result_msg)
-        print("📨 已推送通知")
-    elif not notify_flag:
-        print("ℹ️ 今日已签到，无需通知")
+        print("开始执行抽奖...")
 
-except Exception as e:
-    error_msg = f"❌ 执行异常: {str(e)}"
-    print(error_msg)
-    if send:
-        send("天翼云盘签到", error_msg)
+        # 三个抽奖链接（支持3次抽奖）
+        draw_urls = [
+            "https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN&activityId=ACT_SIGNIN",
+            "https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN_PHOTOS&activityId=ACT_SIGNIN",
+            "https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_2022_FLDFS_KJ&activityId=ACT_SIGNIN"
+        ]
 
-print("【天翼云盘签到】执行完毕")
+        draw_results = []
+        draw_headers = headers.copy()
+
+        for i, url in enumerate(draw_urls, 1):
+            try:
+                if i > 1:
+                    time.sleep(5)  # 抽奖之间间隔5秒，降低风控
+
+                resp = session.get(url, headers=draw_headers, timeout=15)
+                data = resp.json()
+
+                if "errorCode" in data:
+                    msg = f"第{i}次抽奖失败：次数不足"
+                    print(f"❌ {msg}")
+                else:
+                    prize_name = data.get("prizeName", "未知奖品")
+                    msg = f"第{i}次抽奖成功：{prize_name}"
+                    print(f"🎉 {msg}")
+
+                draw_results.append(msg)
+
+            except Exception as e:
+                msg = f"第{i}次抽奖出错: {e}"
+                print(f"❌ {msg}")
+                draw_results.append(msg)
+
+        # 构建汇总结果
+        result_msg = f"{sign_result}\n" + "\n".join(draw_results)
+        print("\n【抽奖汇总】")
+        for r in draw_results:
+            print(f"  {r}")
+
+        # ==================== 通知 ====================
+        if notify_flag and send:
+            title = "✅ 天翼云盘签到成功" if "签到成功" in sign_result else "❌ 天翼云盘签到失败"
+            send(title, result_msg)
+            print("📨 已推送通知")
+        elif not notify_flag:
+            print("ℹ️ 今日已签到，无需通知")
+
+    except Exception as e:
+        error_msg = f"❌ 执行异常: {str(e)}"
+        print(error_msg)
+        if send:
+            send("天翼云盘签到", error_msg)
+
+    print("【天翼云盘签到】执行完毕")
+
+
+if __name__ == "__main__":
+    main()
