@@ -72,7 +72,7 @@ for idx, cookie in enumerate(cookie_list, 1):
             stats = get_sign_stats(cookie)
             money = get_current_money(cookie)
 
-            result = f"账号{idx}: 签到成功 | 本月{stats.get('本月签到', '?')}天 | 累计{stats.get('累计签到', '?')}天"
+            result = f"✅ 今日已签到 | 账号{idx} | 本月{stats.get('本月签到', '?')}天 | 累计{stats.get('累计签到', '?')}天"
             if stats.get('上次奖励'):
                 result += f" | 上次奖励为: {stats['上次奖励']}"
             if money:
@@ -101,7 +101,7 @@ for idx, cookie in enumerate(cookie_list, 1):
         stats = get_sign_stats(cookie)
         money = get_current_money(cookie)
 
-        result_text = f"账号{idx}: 签到成功 | 本月{stats.get('本月签到', '?')}天 | 累计{stats.get('累计签到', '?')}天"
+        result_text = f"✅ 签到成功 | 账号{idx} | 本月{stats.get('本月签到', '?')}天 | 累计{stats.get('累计签到', '?')}天"
         if stats.get('上次奖励'):
             result_text += f" | 奖励为: {stats['上次奖励']}"
         if money:
@@ -112,7 +112,7 @@ for idx, cookie in enumerate(cookie_list, 1):
         send("比思论坛签到", result_text)
 
     except Exception as e:
-        error_msg = f"账号{idx} 执行异常: {str(e)}"
+        error_msg = f"❌ 执行异常 | 账号{idx}: {str(e)}"
         print(error_msg)
         all_results.append(error_msg)
 
