@@ -22,7 +22,7 @@
 #
 # 【注意事项】
 # • 本脚本**仅支持 Cookie 方式**，已完全移除手机号+密码登录相关代码
-# • 抽奖逻辑已替换为 dext7r/189pan 项目的改进版本（支持3次抽奖 + 更好错误判断）
+# • 已移除抽奖逻辑（仅保留签到功能）
 # • 如果在青龙 Docker 中运行失败，常见原因是缺少系统依赖，可尝试在容器内执行：
 #   apt-get update && apt-get install -y libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2
 
@@ -153,62 +153,37 @@ def main():
 
         resp_sign = session.get(sign_url, headers=headers, timeout=15)
         data_sign = resp_sign.json()
-        netdisk_bonus = data_sign.get("netdiskBonus", 0)
-        is_sign = data_sign.get("isSign", 0)
 
-        if str(is_sign) == "1":
-            sign_result = "✅ 今日已签到"
-            notify_flag = False
-        else:
-            sign_result = f"✅ 签到成功，获得 {netdisk_bonus}M 空间"
+        # 正确判断签到结果：优先检查 errorCode
+        if "errorCode" in data_sign:
+            error_code = data_sign.get("errorCode")
+            error_msg = data_sign.get("errorMsg", error_code)
+            sign_result = f"❌ 签到失败: {error_msg}"
             notify_flag = True
+        else:
+            is_sign = data_sign.get("isSign", 0)
+            netdisk_bonus = data_sign.get("netdiskBonus", 0)
+
+            if str(is_sign) == "1":
+                sign_result = "✅ 今日已签到"
+                notify_flag = False
+            else:
+                sign_result = f"✅ 签到成功，获得 {netdisk_bonus}M 空间"
+                notify_flag = True
 
         print(f"📢 签到结果: {sign_result}")
 
-        print("开始执行抽奖...")
-
-        # 三个抽奖链接（支持3次抽奖）
-        draw_urls = [
-            "https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN&activityId=ACT_SIGNIN",
-            "https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN_PHOTOS&activityId=ACT_SIGNIN",
-            "https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_2022_FLDFS_KJ&activityId=ACT_SIGNIN"
-        ]
-
-        draw_results = []
-        draw_headers = headers.copy()
-
-        for i, url in enumerate(draw_urls, 1):
-            try:
-                if i > 1:
-                    time.sleep(5)  # 抽奖之间间隔5秒，降低风控
-
-                resp = session.get(url, headers=draw_headers, timeout=15)
-                data = resp.json()
-
-                if "errorCode" in data:
-                    msg = f"第{i}次抽奖失败：次数不足"
-                    print(f"❌ {msg}")
-                else:
-                    prize_name = data.get("prizeName", "未知奖品")
-                    msg = f"第{i}次抽奖成功：{prize_name}"
-                    print(f"🎉 {msg}")
-
-                draw_results.append(msg)
-
-            except Exception as e:
-                msg = f"第{i}次抽奖出错: {e}"
-                print(f"❌ {msg}")
-                draw_results.append(msg)
-
-        # 构建汇总结果
-        result_msg = f"{sign_result}\n" + "\n".join(draw_results)
-        print("\n【抽奖汇总】")
-        for r in draw_results:
-            print(f"  {r}")
+        # 构建结果（仅签到结果）
+        result_msg = sign_result
 
         # ==================== 通知 ====================
         if notify_flag and send:
-            title = "✅ 天翼云盘签到成功" if "签到成功" in sign_result else "❌ 天翼云盘签到失败"
+            if "签到失败" in sign_result:
+                title = "❌ 天翼云盘签到失败"
+            elif "今日已签到" in sign_result:
+                title = "ℹ️ 天翼云盘今日已签到"
+            else:
+                title = "✅ 天翼云盘签到成功"
             send(title, result_msg)
             print("📨 已推送通知")
         elif not notify_flag:
