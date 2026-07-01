@@ -12,9 +12,9 @@ import requests
 from datetime import datetime, timezone
 
 try:
-    from sendNotify import send
+    from notify import send
 except ImportError:
-    send = lambda t, c: print("推送未启用")
+    send = None
 
 JKFORUM_COOKIE = os.environ.get("JKFORUM_COOKIE", "")
 RANDOM_SIGNIN = os.environ.get("RANDOM_SIGNIN", "false").lower() == "true"
@@ -186,6 +186,7 @@ def like_comment(cookies, board_id, comment_id):
 
 
 def do_browse_and_like_tasks(cookies, browse_count=0, like_article_count=3, like_comment_count=3):
+    """ 自然穿插点赞 + 支持点赞只模式 + 点赞后3-5秒延迟 """
     actual_browse = math.ceil(browse_count * random.uniform(1.3, 1.5)) if browse_count > 0 else 0
     actual_like_article = math.ceil(like_article_count * random.uniform(2.0, 3.0)) if like_article_count > 0 else 0
     actual_like_comment = math.ceil(like_comment_count * random.uniform(2.0, 3.0)) if like_comment_count > 0 else 0
@@ -210,21 +211,29 @@ def do_browse_and_like_tasks(cookies, browse_count=0, like_article_count=3, like
     liked_a = 0
     liked_c = 0
 
-    for idx, article in enumerate(articles[:actual_browse], 1):
+    # 点赞只模式时也处理足够文章，让点赞能自然穿插
+    if actual_browse > 0:
+        num_to_process = actual_browse
+    else:
+        num_to_process = min(30, len(articles))
+
+    for idx, article in enumerate(articles[:num_to_process], 1):
         article_id = article.get("id")
         if not article_id:
             continue
 
         success = get_article_detail(cookies, article_id)
-        if success:
+        if success and actual_browse > 0 and idx <= actual_browse:
             viewed += 1
 
+        # === 自然穿插点赞文章 ===
         if liked_a < actual_like_article and random.random() < 0.38:
             if like_article(cookies, board_id, article_id):
                 liked_a += 1
                 print(f"    [点赞文章] 在浏览第 {idx} 篇时执行 | ID: {article_id} | ✅")
                 time.sleep(random.randint(3, 5))
 
+        # === 自然穿插点赞留言 ===
         if liked_c < actual_like_comment and random.random() < 0.28:
             comments = get_comments(cookies, article_id, limit=5)
             if comments:
@@ -234,12 +243,14 @@ def do_browse_and_like_tasks(cookies, browse_count=0, like_article_count=3, like
                     print(f"    [点赞留言] 在浏览第 {idx} 篇时执行 | 来自文章: {article_id} | ✅")
                     time.sleep(random.randint(3, 5))
 
-        if idx < actual_browse:
-            delay = random.randint(2, 3)
-            print(f"    [浏览] 第 {idx}/{actual_browse} 篇 | ID: {article_id} | 等待 {delay} 秒")
-            time.sleep(delay)
-        else:
-            print(f"    [浏览] 第 {idx}/{actual_browse} 篇 | ID: {article_id} | 完成")
+        # 浏览间隔（只在实际需要浏览时打印和等待）
+        if actual_browse > 0 and idx <= actual_browse:
+            if idx < actual_browse:
+                delay = random.randint(2, 3)
+                print(f"    [浏览] 第 {idx}/{actual_browse} 篇 | ID: {article_id} | 等待 {delay} 秒")
+                time.sleep(delay)
+            else:
+                print(f"    [浏览] 第 {idx}/{actual_browse} 篇 | ID: {article_id} | 完成")
 
     print(f"\n    ✅ 最终完成统计：")
     print(f"       成功浏览: {viewed} 篇")
@@ -248,8 +259,8 @@ def do_browse_and_like_tasks(cookies, browse_count=0, like_article_count=3, like
 
 
 def browse_specific_boards(cookies):
-    print("\n[步骤] 执行逛逛特定版區")
-    for board_id, name in [(481, "女神焦點"), (520, "IG推特美女")]:
+    print("\n[步骤] 执行赶赶特定版区")
+    for board_id, name in [(481, "女神焦点"), (520, "IG推特美女")]:
         try:
             resp = requests.get(f"https://jkforum.net/api/jkf-forum/v1/Board/{board_id}", headers=HEADERS, cookies=cookies, timeout=15)
             if resp.status_code == 200:
@@ -345,7 +356,7 @@ def process_account(cookies, account_num, total_accounts):
             remaining = goal - current
             action = should_perform_task(task)
 
-            if name == "進行每日簽到":
+            if name == "进行每日签到":
                 if skip_signin_task:
                     continue
                 print(f"\n[任务处理] {name} | 当前进度: {current}/{goal} | 剩余: {remaining}")
@@ -360,13 +371,13 @@ def process_account(cookies, account_num, total_accounts):
                 complete_task(cookies, task["id"])
                 print(f"    → 进度已达标，直接领取")
             else:
-                if name == "觀看任30篇文章":
+                if name == "观看任30篇文章":
                     do_browse_and_like_tasks(cookies, browse_count=remaining)
-                elif name == "對三篇文章點讚":
+                elif name == "对三篇文章点赞":
                     need_like_article = remaining
-                elif name == "對三則留言點讚":
+                elif name == "对三则留言点赞":
                     need_like_comment = remaining
-                elif "逛逛版區" in name:
+                elif "赶赶版区" in name:
                     need_browse_boards = True
 
         if need_like_article > 0 or need_like_comment > 0:
@@ -394,7 +405,7 @@ def process_account(cookies, account_num, total_accounts):
                 if after_assets.get(name, 0) - before_assets.get(name, 0) != 0]
 
     print(f"\n【本次运行资产变化】 {' | '.join(increase) if increase else '无变化'}")
-    print(f"【当前总资产】金币: {after_assets.get('金币', 0)}  宝石: {after_assets.get('宝石', 0)}")
+    print(f"[当前总资产] 金币: {after_assets.get(' 金币', 0)}  宝石: {after_assets.get('宝石', 0)}")
 
     return {
         "account_num": account_num,
@@ -429,7 +440,7 @@ def jkforum_main():
         if stage.get("status") == "done" and (stage.get("success", 0) > 0 or stage.get("failed", 0) > 0):
             notify_list.append(r)
 
-    if notify_list:
+    if notify_list and send:
         print(f"\n📢 检测到 {len(notify_list)} 个账号的总奖励领取有结果，正在发送通知...")
         notify_lines = []
         for r in notify_list:
@@ -448,7 +459,10 @@ def jkforum_main():
         send(title, notify_content)
         print("✅ 通知发送完成")
     else:
-        print("\n✅ 无需发送通知（已签到或总奖励无变化）")
+        if not notify_list:
+            print("\n✅ 无需发送通知（已签到或总奖励无变化）")
+        else:
+            print("\n✅ 推送模块未加载，跳过通知")
 
     print("\n" + "="*65)
     print("✅ 全部账号处理完毕，脚本结束")
