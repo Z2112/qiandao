@@ -42,7 +42,7 @@ def random_delay_if_enabled():
             time_str += f"{minutes} 分钟 "
         if seconds > 0 or minutes == 0:
             time_str += f"{seconds} 秒"
-        print(f"\n[随机延迟] 等待 {time_str}后执行...")
+        print(f"\n⏳ [随机延迟] 等待 {time_str}后执行...")
         time.sleep(delay)
 
 
@@ -72,7 +72,7 @@ def get_member_id_from_jwt(cookies):
 
 
 def clear_all_notifications(cookies):
-    print("\n[步骤] 开始清理通知")
+    print("\n🧹 [步骤] 开始清理通知")
     member_id = get_member_id_from_jwt(cookies)
     if not member_id:
         return
@@ -125,7 +125,7 @@ def should_perform_task(task):
 
 
 def do_sign_in(cookies):
-    print("\n[步骤] 执行每日签到")
+    print("\n📝 [步骤] 执行每日签到")
     try:
         resp = requests.put("https://jkforum.net/api/jkf-dailysign/v1/DailySign",
                             headers=HEADERS, cookies=cookies,
@@ -186,12 +186,11 @@ def like_comment(cookies, board_id, comment_id):
 
 
 def do_browse_and_like_tasks(cookies, browse_count=0, like_article_count=3, like_comment_count=3):
-    """ 自然穿插点赞 + 支持点赞只模式 + 点赞后3-5秒延迟 """
     actual_browse = math.ceil(browse_count * random.uniform(1.3, 1.5)) if browse_count > 0 else 0
     actual_like_article = math.ceil(like_article_count * random.uniform(2.0, 3.0)) if like_article_count > 0 else 0
     actual_like_comment = math.ceil(like_comment_count * random.uniform(2.0, 3.0)) if like_comment_count > 0 else 0
 
-    print(f"\n[步骤] 执行浏览+点赞任务（自然穿插模式）")
+    print(f"\n🔄 [步骤] 执行浏览+点赞任务（自然穿插模式）")
     print(f"    计划浏览: {browse_count} 篇 → 实际执行: {actual_browse} 篇")
     print(f"    计划点赞文章: {like_article_count} 篇 → 实际执行: {actual_like_article} 篇")
     print(f"    计划点赞留言: {like_comment_count} 则 → 实际执行: {actual_like_comment} 则")
@@ -200,7 +199,7 @@ def do_browse_and_like_tasks(cookies, browse_count=0, like_article_count=3, like
         return
 
     board_id = random.choice(VIEW_BOARDS)
-    print(f"    选择版块ID: {board_id}")
+    print(f"    📍 选择版块ID: {board_id}")
 
     articles = get_article_list(cookies, board_id, max(80, actual_browse + 15))
     if not articles:
@@ -211,7 +210,6 @@ def do_browse_and_like_tasks(cookies, browse_count=0, like_article_count=3, like
     liked_a = 0
     liked_c = 0
 
-    # 点赞只模式时也处理足够文章，让点赞能自然穿插
     if actual_browse > 0:
         num_to_process = actual_browse
     else:
@@ -226,41 +224,38 @@ def do_browse_and_like_tasks(cookies, browse_count=0, like_article_count=3, like
         if success and actual_browse > 0 and idx <= actual_browse:
             viewed += 1
 
-        # === 自然穿插点赞文章 ===
         if liked_a < actual_like_article and random.random() < 0.38:
             if like_article(cookies, board_id, article_id):
                 liked_a += 1
-                print(f"    [点赞文章] 在浏览第 {idx} 篇时执行 | ID: {article_id} | ✅")
+                print(f"    👍 [点赞文章] 第 {idx} 篇 | ID: {article_id} | ✅")
                 time.sleep(random.randint(3, 5))
 
-        # === 自然穿插点赞留言 ===
         if liked_c < actual_like_comment and random.random() < 0.28:
             comments = get_comments(cookies, article_id, limit=5)
             if comments:
                 comment = random.choice(comments)
                 if like_comment(cookies, board_id, comment.get("id")):
                     liked_c += 1
-                    print(f"    [点赞留言] 在浏览第 {idx} 篇时执行 | 来自文章: {article_id} | ✅")
+                    print(f"    💬 [点赞留言] 第 {idx} 篇 | 来自文章: {article_id} | ✅")
                     time.sleep(random.randint(3, 5))
 
-        # 浏览间隔（只在实际需要浏览时打印和等待）
         if actual_browse > 0 and idx <= actual_browse:
             if idx < actual_browse:
                 delay = random.randint(2, 3)
-                print(f"    [浏览] 第 {idx}/{actual_browse} 篇 | ID: {article_id} | 等待 {delay} 秒")
+                print(f"    👀 [浏览] 第 {idx}/{actual_browse} 篇 | ID: {article_id} | 等待 {delay} 秒")
                 time.sleep(delay)
             else:
-                print(f"    [浏览] 第 {idx}/{actual_browse} 篇 | ID: {article_id} | 完成")
+                print(f"    👀 [浏览] 第 {idx}/{actual_browse} 篇 | ID: {article_id} | 完成")
 
-    print(f"\n    ✅ 最终完成统计：")
-    print(f"       成功浏览: {viewed} 篇")
-    print(f"       点赞文章: {liked_a} 篇")
-    print(f"       点赞留言: {liked_c} 则")
+    print(f"\n📊 最终完成统计：")
+    print(f"    成功浏览: {viewed} 篇")
+    print(f"    点赞文章: {liked_a} 篇")
+    print(f"    点赞留言: {liked_c} 则")
 
 
 def browse_specific_boards(cookies):
-    print("\n[步骤] 执行赶赶特定版区")
-    for board_id, name in [(481, "女神焦点"), (520, "IG推特美女")]:
+    print("\n🔄 [步骤] 执行逛逛特定版區")
+    for board_id, name in [(481, "女神焦點"), (520, "IG推特美女")]:
         try:
             resp = requests.get(f"https://jkforum.net/api/jkf-forum/v1/Board/{board_id}", headers=HEADERS, cookies=cookies, timeout=15)
             if resp.status_code == 200:
@@ -270,7 +265,7 @@ def browse_specific_boards(cookies):
 
 
 def claim_daily_stage_rewards(cookies):
-    print("\n[步骤] 开始领取每日任务总奖励")
+    print("\n🎁 [步骤] 开始领取每日任务总奖励")
     try:
         stages = get_daily_stages(cookies).get("stages", [])
         uncompleted = [s for s in stages if not s.get("isCompleted")]
@@ -279,13 +274,13 @@ def claim_daily_stage_rewards(cookies):
             print("    ✅ 总奖励已全部领取，无需操作")
             return {"status": "skipped", "success": 0, "failed": 0}
 
-        print(f"    发现 {len(uncompleted)} 个未领取的总奖励阶段")
+        print(f"    📌 发现 {len(uncompleted)} 个未领取的总奖励阶段")
         success_count = 0
         failed_count = 0
 
         for stage in uncompleted:
             stage_id = stage.get("id")
-            print(f"    正在尝试领取 stageId={stage_id}")
+            print(f"    🔄 正在尝试领取 stageId={stage_id}")
             resp = requests.post("https://jkforum.net/api/jkf-dailyTask-api/v1/DailyStage/CompleteStage",
                                  headers=HEADERS, cookies=cookies, json={"stageId": stage_id}, timeout=15)
             if resp.status_code in [200, 201]:
@@ -295,10 +290,7 @@ def claim_daily_stage_rewards(cookies):
                 print(f"    ❌ 领取失败")
                 failed_count += 1
 
-        if success_count > 0 or failed_count > 0:
-            return {"status": "done", "success": success_count, "failed": failed_count}
-        else:
-            return {"status": "skipped", "success": 0, "failed": 0}
+        return {"status": "done", "success": success_count, "failed": failed_count}
 
     except Exception as e:
         print(f"    ❌ 领取总奖励异常: {e}")
@@ -330,7 +322,7 @@ def process_account(cookies, account_num, total_accounts):
     before_assets = get_current_assets(cookies)
     tasks = get_daily_tasks(cookies)
 
-    print("\n[步骤] 获取当前每日任务状态")
+    print("\n📋 当前每日任务状态：")
     for t in tasks:
         current, goal = get_task_progress(t)
         status = "✅ 已完成" if t.get("isCompleted") else f"❌ {current}/{goal}"
@@ -343,9 +335,9 @@ def process_account(cookies, account_num, total_accounts):
     stage_result = {"status": "skipped", "success": 0, "failed": 0}
 
     if not any(not t.get("isCompleted") for t in tasks):
-        print("\n[结果] 所有任务已完成")
+        print("\n✅ 所有任务已完成")
     else:
-        print("\n[步骤] 开始处理未完成任务")
+        print("\n🔄 开始处理未完成任务")
 
         for task in tasks:
             if task.get("isCompleted"):
@@ -356,28 +348,28 @@ def process_account(cookies, account_num, total_accounts):
             remaining = goal - current
             action = should_perform_task(task)
 
-            if name == "进行每日签到":
+            if name == "進行每日簽到":
                 if skip_signin_task:
                     continue
-                print(f"\n[任务处理] {name} | 当前进度: {current}/{goal} | 剩余: {remaining}")
+                print(f"\n📌 [任务处理] {name} | 当前进度: {current}/{goal} | 剩余: {remaining}")
                 signin_status = do_sign_in(cookies)
                 if signin_status == "success":
                     skip_signin_task = True
                 continue
 
-            print(f"\n[任务处理] {name} | 当前进度: {current}/{goal} | 剩余: {remaining}")
+            print(f"\n📌 [任务处理] {name} | 当前进度: {current}/{goal} | 剩余: {remaining}")
 
             if action == "claim_only":
                 complete_task(cookies, task["id"])
-                print(f"    → 进度已达标，直接领取")
+                print(f"    ✅ 进度已达标，直接领取")
             else:
-                if name == "观看任30篇文章":
+                if name == "觀看任30篇文章":
                     do_browse_and_like_tasks(cookies, browse_count=remaining)
-                elif name == "对三篇文章点赞":
+                elif name == "對三篇文章點讚":
                     need_like_article = remaining
-                elif name == "对三则留言点赞":
+                elif name == "對三則留言點讚":
                     need_like_comment = remaining
-                elif "赶赶版区" in name:
+                elif "逛逛版區" in name:
                     need_browse_boards = True
 
         if need_like_article > 0 or need_like_comment > 0:
@@ -388,14 +380,13 @@ def process_account(cookies, account_num, total_accounts):
         if need_browse_boards:
             browse_specific_boards(cookies)
 
-        print("\n[步骤] 刷新任务状态并领取奖励")
+        print("\n🔄 刷新任务状态并领取奖励")
         tasks = get_daily_tasks(cookies)
         for task in tasks:
             if not task.get("isCompleted") and should_perform_task(task) == "claim_only":
                 if complete_task(cookies, task["id"]):
                     print(f"    ✅ 已领取: {task['name']}")
 
-    # 领取总奖励
     stage_result = claim_daily_stage_rewards(cookies)
     clear_all_notifications(cookies)
 
@@ -404,8 +395,8 @@ def process_account(cookies, account_num, total_accounts):
                 for name in TRACK_KEYS.values()
                 if after_assets.get(name, 0) - before_assets.get(name, 0) != 0]
 
-    print(f"\n【本次运行资产变化】 {' | '.join(increase) if increase else '无变化'}")
-    print(f"[当前总资产] 金币: {after_assets.get(' 金币', 0)}  宝石: {after_assets.get('宝石', 0)}")
+    print(f"\n📊 本次运行资产变化： {' | '.join(increase) if increase else '无变化'}")
+    print(f"💰 当前总资产：金币: {after_assets.get('金币', 0)}  宝石: {after_assets.get('宝石', 0)}")
 
     return {
         "account_num": account_num,
@@ -433,7 +424,6 @@ def jkforum_main():
         if cookies:
             results.append(process_account(cookies, idx, len(parse_multi_cookies(JKFORUM_COOKIE))))
 
-    # ========== 只在总奖励领取有结果时通知 ==========
     notify_list = []
     for r in results:
         stage = r.get("stage_result", {})
@@ -442,19 +432,26 @@ def jkforum_main():
 
     if notify_list and send:
         print(f"\n📢 检测到 {len(notify_list)} 个账号的总奖励领取有结果，正在发送通知...")
+
         notify_lines = []
         for r in notify_list:
             stage = r["stage_result"]
             assets = r["current_assets"]
+            success = stage.get('success', 0)
+            failed = stage.get('failed', 0)
+
             text = (
                 f"【账号 {r['account_num']}】\n"
-                f"总奖励领取结果：成功 {stage.get('success', 0)} 个，失败 {stage.get('failed', 0)} 个\n"
-                f"金币: {assets.get('金币', 0)}   宝石: {assets.get('宝石', 0)}\n"
-                f"资产变化: {r.get('increase_text', '无变化')}"
+                f"🎁 总奖励领取结果\n"
+                f"✅ 成功：{success} 个\n"
+                f"❌ 失败：{failed} 个\n\n"
+                f"💰 金币：{assets.get('金币', 0)}\n"
+                f"💎 宝石：{assets.get('宝石', 0)}\n"
+                f"📈 资产变化：{r.get('increase_text', '无变化')}"
             )
             notify_lines.append(text)
 
-        notify_content = "\n\n" + "="*40 + "\n\n".join(notify_lines)
+        notify_content = "\n\n" + "─" * 35 + "\n\n".join(notify_lines)
         title = f"JKForum 总奖励领取结果 | {datetime.now().strftime('%m-%d %H:%M')} ({len(notify_list)}账号)"
         send(title, notify_content)
         print("✅ 通知发送完成")
