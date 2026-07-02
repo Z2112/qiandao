@@ -100,6 +100,7 @@ def main():
         print(f"【随机延迟】将在 {delay // 60} 分钟 {delay % 60} 秒后开始执行...")
         time.sleep(delay)
 
+    always_notify = os.getenv("ALWAYS_NOTIFY", "false").lower() == "true"
     cookie_list = get_all_cookies()
     all_results = []
 
@@ -109,7 +110,7 @@ def main():
         try:
             solution = get_flare_solution(SIGNIN_URL, cookie_str)
             if not solution:
-                result = f"账号{idx}: FlareSolverr 调用失败"
+                result = f"❌ 签到失败 | 账号{idx} | FlareSolverr 调用失败"
                 print(result)
                 all_results.append(result)
                 continue
@@ -131,7 +132,7 @@ def main():
                 stats = get_sign_stats(session, html)
                 money = get_current_money(session)
 
-                result = f"账号{idx}: ✅ 今日已签到 | 本月{stats.get('本月签到', '?')}天 | 累计{stats.get('累计签到', '?')}天"
+                result = f"✅ 今日已签到 | 账号{idx} | 本月{stats.get('本月签到', '?')}天 | 累计{stats.get('累计签到', '?')}天"
                 if stats.get('上次奖励'):
                     result += f" | 上次奖励: {stats['上次奖励']}"
                 if money:
@@ -145,7 +146,7 @@ def main():
             soup = BeautifulSoup(html, "html.parser")
             formhash_tag = soup.find("input", {"name": "formhash"})
             if not formhash_tag:
-                result = f"账号{idx}: 未找到 formhash"
+                result = f"❌ 签到失败 | 账号{idx} | 未找到 formhash"
                 print(result)
                 all_results.append(result)
                 continue
@@ -169,7 +170,7 @@ def main():
             stats = get_sign_stats(session)
             money = get_current_money(session)
 
-            result_text = f"账号{idx}: 签到成功 | 本月{stats.get('本月签到', '?')}天 | 累计{stats.get('累计签到', '?')}天"
+            result_text = f"✅ 签到成功 | 账号{idx} | 本月{stats.get('本月签到', '?')}天 | 累计{stats.get('累计签到', '?')}天"
             if stats.get('上次奖励'):
                 result_text += f" | 本次奖励: {stats['上次奖励']}"
             if money:
@@ -179,19 +180,26 @@ def main():
             all_results.append(result_text)
 
         except Exception as e:
-            error_msg = f"账号{idx} 执行异常: {str(e)}"
+            error_msg = f"❌ 签到失败 | 账号{idx} | 执行异常: {str(e)}"
             print(error_msg)
             all_results.append(error_msg)
 
-    # ==================== 最终通知（参考 enshan.js 风格） ====================
+    # ==================== 最终通知 ====================
+    # ALWAYS_NOTIFY=true：成功/失败都发；false：仅失败时发
     if all_results:
         print("\n【国语视界签到】结果汇总：")
         print("\n".join(all_results))
 
-        if send:
+        has_fail = any(
+            "失败" in r or "异常" in r or "未找到" in r or "❌" in r
+            for r in all_results
+        )
+        if send and (always_notify or has_fail):
             summary = "\n".join(all_results)
             send("国语视界签到", f"【国语视界签到结果】\n\n{summary}")
-            print("🎉 通知已发送")
+            print("🎉 通知已发送" + ("（ALWAYS_NOTIFY=true）" if always_notify and not has_fail else "（存在签到失败）" if has_fail else ""))
+        else:
+            print("✅ 全部签到成功/已签到，ALWAYS_NOTIFY=false，跳过通知")
 
     print("【国语视界签到】任务执行完毕")
 

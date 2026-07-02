@@ -156,7 +156,7 @@ async function processAccount(cookieInput, accountIndex) {
 
   if (status === '已签到') {
     const credits = await getMyCreditsAPI(cookieInput);
-    return `✅ 今日已签到 | 吾爱币: ${credits || '未知'}`;
+    return `✅ 今日已签到 | 账号${accountIndex} | 吾爱币: ${credits || '未知'}`;
   }
 
   // ==================== 未签到 → 执行签到 ====================
@@ -175,7 +175,35 @@ async function processAccount(cookieInput, accountIndex) {
     const oldCredits = await getMyCreditsAPI(cookieInput);
     console.log(`签到前吾爱币: ${oldCredits || '未知'}`);
 
-    const signResult = await doSign(page);
+    const MAX_SIGN_ATTEMPTS = 3;
+    let signResult = { status: 'fail', message: '未执行签到' };
+
+    for (let attempt = 1; attempt <= MAX_SIGN_ATTEMPTS; attempt++) {
+      console.log(`\n🔄 签到尝试 ${attempt}/${MAX_SIGN_ATTEMPTS}`);
+      signResult = await doSign(page);
+
+      if (signResult.status === 'success') {
+        break;
+      }
+
+      // 验证码识别或提交失败 → 复核是否其实已签到成功
+      console.log('验证码识别或提交失败，重新检查签到状态...');
+      await delay(2000);
+      const recheck = await checkSignStatus(cookieInput);
+      console.log(`复核状态: ${recheck}`);
+
+      if (recheck === '已签到') {
+        signResult = { status: 'success', message: '签到成功（复核确认）' };
+        break;
+      }
+
+      if (attempt < MAX_SIGN_ATTEMPTS) {
+        console.log(`尚未签到成功，2 秒后进行第 ${attempt + 1} 次重试...`);
+        await delay(2000);
+      } else {
+        console.log(`已达最大重试次数 ${MAX_SIGN_ATTEMPTS}，停止重试`);
+      }
+    }
 
     if (signResult.status === 'success') {
       await delay(3000);
@@ -187,15 +215,15 @@ async function processAccount(cookieInput, accountIndex) {
       let rewardText = '';
       if (oldCredits && newCredits) {
         const diff = parseInt(newCredits) - parseInt(oldCredits);
-        if (diff > 0) rewardText = `，本次获得 ${diff} 吾爱币`;
+        if (diff > 0) rewardText = ` | 本次获得 ${diff} 吾爱币`;
       }
 
-      finalResult = `✅ 签到成功${rewardText}，当前总共 ${newCredits || '未知'} 吾爱币`;
+      finalResult = `✅ 签到成功 | 账号${accountIndex}${rewardText} | 当前吾爱币: ${newCredits || '未知'}`;
     } else {
-      finalResult = `❌ ${signResult.message}`;
+      finalResult = `❌ 签到失败 | 账号${accountIndex} | ${signResult.message}（已重试 ${MAX_SIGN_ATTEMPTS} 次）`;
     }
   } catch (err) {
-    finalResult = `执行异常: ${err.message}`;
+    finalResult = `❌ 签到失败 | 账号${accountIndex} | 执行异常: ${err.message}`;
   } finally {
     if (browser) {
       await browser.close();
@@ -225,20 +253,26 @@ async function main() {
 
   for (let i = 0; i < cookieList.length; i++) {
     const result = await processAccount(cookieList[i], i + 1);
-    allResults.push(`账号${i + 1}: ${result}`);
+    allResults.push(result);
   }
 
   // 无论是否已签到，都打印详细结果
   console.log("\n" + allResults.join('\n'));
 
-  const hasAction = allResults.some(r => r.includes('签到成功') || r.includes('执行异常'));
+  // ALWAYS_NOTIFY=true：成功/失败都发通知；false：仅失败时发通知
+  const alwaysNotify = String(process.env.ALWAYS_NOTIFY || '').toLowerCase() === 'true';
+  const hasFail = allResults.some(r =>
+    r.includes('❌') || r.includes('执行异常') || r.includes('失败')
+  );
 
-  if (hasAction) {
+  if (alwaysNotify || hasFail) {
     const summary = allResults.join('\n');
     await notify.sendNotify('52pojie 签到通知', `多账号签到完成\n\n${summary}\n\n时间：${new Date().toLocaleString('zh-CN')}`);
-    console.log('🎉 通知已发送');
+    console.log(alwaysNotify
+      ? '🎉 通知已发送（ALWAYS_NOTIFY=true，成功与否均通知）'
+      : '🎉 通知已发送（存在签到失败）');
   } else {
-    console.log('✅ 所有账号均已签到，无需发送通知');
+    console.log('✅ 全部签到成功/已签到，ALWAYS_NOTIFY=false，跳过通知');
   }
 
   console.log('=== 签到结束 ===');

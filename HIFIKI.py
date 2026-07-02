@@ -56,14 +56,14 @@ def get_total_coins(cookie, base_url):
 def do_signin(site_name, domain, cookie_list):
     """
     执行指定站点的签到任务
-    返回: (打印用的结果列表, 需要推送的通知消息列表)
+    返回: (打印用的结果列表, 失败消息列表)
     """
     if not cookie_list:
         return [], []
 
     base_url = f"https://www.{domain}"
     results = []
-    notify_messages = []
+    fail_messages = []
 
     sign_url = f"{base_url}/sg_sign.htm"
     headers_template = {
@@ -93,7 +93,6 @@ def do_signin(site_name, domain, cookie_list):
             monthly_str = f"本月{continuous_days}天" if continuous_days else "本月未知"
 
             # === 累计签到天数（尝试从页面提取，如无则留空）===
-            # 这里先用 continuous_days 作为占位，后续可根据实际页面再增强
             total_str = ""
 
             # === 当前总金币 ===
@@ -101,38 +100,35 @@ def do_signin(site_name, domain, cookie_list):
             coins_str = f"当前金钱: {total_coins}" if total_coins else ""
 
             # === 状态判断 ===
+            is_fail = False
             if code == "0" or "成功" in message:
                 status_emoji = "✅"
                 sign_result = "签到成功"
-                notify_flag = True
             elif "今天已经签过" in message:
                 status_emoji = "✅"
                 sign_result = "今日已签到"
-                notify_flag = False
             else:
-                status_emoji = "⚠️"
-                sign_result = "签到结果未知"
-                notify_flag = True
+                status_emoji = "❌"
+                sign_result = "签到失败"
+                is_fail = True
 
-            # === 新格式输出 ===
-            parts = [p for p in [monthly_str, total_str, reward_str, coins_str] if p]
+            # === 新格式输出：✅/❌ 置前 ===
+            parts = [p for p in [f"{site_name} 账号{idx}", monthly_str, total_str, reward_str, coins_str] if p]
             result_text = " | ".join(parts)
-            full_line = f"{status_emoji} {site_name} 账号{idx}: {sign_result} | {result_text}"
+            full_line = f"{status_emoji} {sign_result} | {result_text}"
 
             print(full_line)
-
             results.append(full_line)
-
-            if notify_flag:
-                notify_messages.append(full_line)
+            if is_fail:
+                fail_messages.append(full_line)
 
         except Exception as e:
-            error_text = f"❌ {site_name} 账号{idx}: 请求异常 | {str(e)}"
+            error_text = f"❌ 签到失败 | {site_name} 账号{idx} | 请求异常: {str(e)}"
             print(error_text)
             results.append(error_text)
-            notify_messages.append(error_text)
+            fail_messages.append(error_text)
 
-    return results, notify_messages
+    return results, fail_messages
 
 
 def main():
@@ -152,8 +148,9 @@ def main():
         {"name": "HIFINI", "domain": "hifiti.com", "env": "HIFINI_COOKIE"},
     ]
 
+    always_notify = os.getenv("ALWAYS_NOTIFY", "false").lower() == "true"
     all_results = []
-    all_notify_messages = []
+    all_fail_messages = []
 
     for site in sites:
         cookie_list = get_cookies(site["env"])
@@ -162,20 +159,23 @@ def main():
             continue
 
         print(f"\n=== 开始处理站点: {site['name']} ({site['domain']}) ===")
-        site_results, site_notify = do_signin(site["name"], site["domain"], cookie_list)
+        site_results, site_fails = do_signin(site["name"], site["domain"], cookie_list)
         all_results.extend(site_results)
-        all_notify_messages.extend(site_notify)
+        all_fail_messages.extend(site_fails)
 
     if all_results:
         print("\n=== HIFIKI / HIFINI 签到任务全部执行完毕 ===")
         print("\n".join(all_results))
 
-    # 最后统一推送
-    if all_notify_messages and send:
+    # ALWAYS_NOTIFY=true：成功/失败都发；false：仅失败时发
+    if send and all_results and (always_notify or all_fail_messages):
         title = "HIFIKI/HIFINI 签到汇总"
-        content = "\n".join(all_notify_messages)
+        content = "\n".join(all_results)
         send(title, content)
-        print(f"\n📢 已发送统一推送通知（共 {len(all_notify_messages)} 条）")
+        print(f"\n📢 已发送统一推送通知（共 {len(all_results)} 条）" +
+              ("（ALWAYS_NOTIFY=true）" if always_notify and not all_fail_messages else "（存在失败）" if all_fail_messages else ""))
+    elif all_results:
+        print("\n✅ 全部签到成功/已签到，ALWAYS_NOTIFY=false，跳过通知")
 
 
 if __name__ == "__main__":

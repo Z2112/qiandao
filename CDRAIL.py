@@ -22,6 +22,10 @@
 3. MAX_RANDOM_DELAY (可选)
    - 随机延迟最大秒数，默认 3600 秒（1小时）
 
+4. ALWAYS_NOTIFY (可选)
+   - true  = 签到成功与否都发送通知
+   - false = 仅签到失败时发送通知（默认）
+
 [依赖安装]
 
 青龙面板 → 依赖管理 → Python3 → 安装 requests
@@ -67,6 +71,7 @@ max_random_delay = int(os.getenv("MAX_RANDOM_DELAY", "3600"))
 random_signin = os.getenv("RANDOM_SIGNIN", "false").lower() == "true"
 
 privacy_mode = os.getenv("PRIVACY_MODE", "true").lower() == "true"
+always_notify = os.getenv("ALWAYS_NOTIFY", "false").lower() == "true"
 
 DEFAULT_HEADERS = {
     "system-version": "16.4.1",
@@ -249,7 +254,7 @@ def main():
 
     msg_lines = []
     success_count = 0
-    has_real_action = False
+    has_fail = False
 
     for idx, account_data in enumerate(accounts, start=1):
         headers = build_headers(account_data)
@@ -264,13 +269,12 @@ def main():
 
         if status == "success":
             success_count += 1
-            msg_lines.append(f"✅ 账号{idx}: {info}")
-            has_real_action = True
+            msg_lines.append(f"✅ 签到成功 | 账号{idx} | {info}")
         elif status == "already":
-            msg_lines.append(f"✅ 账号{idx}: {info}")
+            msg_lines.append(f"✅ 今日已签到 | 账号{idx} | {info}")
         else:
-            msg_lines.append(f"❌ 账号{idx}: {info}")
-            has_real_action = True
+            msg_lines.append(f"❌ 签到失败 | 账号{idx} | {info}")
+            has_fail = True
 
         if idx < len(accounts):
             time.sleep(random.uniform(3, 8))
@@ -280,10 +284,11 @@ def main():
 
     print("\n" + content)
 
-    if has_real_action:
+    # ALWAYS_NOTIFY=true：成功/失败都发；false：仅失败时发
+    if always_notify or has_fail:
         push(content)
     else:
-        print("ℹ️ 所有账号今日已签到，无需发送通知")
+        print("✅ 全部签到成功/已签到，ALWAYS_NOTIFY=false，跳过通知")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@
    - HASSBIAN_COOKIE    （必填，支持多账号）多个 Cookie 用 & 分割 或 换行分割
    - RANDOM_SIGNIN      （可选）true = 开启随机延迟
    - MAX_RANDOM_DELAY   （可选）随机延迟最大秒数，默认 3600 秒
+   - ALWAYS_NOTIFY      （可选）true = 成功/失败都通知；false = 仅失败通知（默认 false）
 
 3. 多账号配置示例（HASSBIAN_COOKIE 中填写）：
    Cookie字符串1&Cookie字符串2&Cookie字符串3
@@ -132,20 +133,21 @@ def main():
             except:
                 pass
 
-            # 判断结果
+            # 判断结果（✅ 成功/已签到，❌ 失败）
             if old_money and new_money and old_money != new_money:
                 try:
                     old_val = int(str(old_money).replace(',', '').replace(' ', '').strip())
                     new_val = int(str(new_money).replace(',', '').replace(' ', '').strip())
                     diff = new_val - old_val
                     if diff > 0:
-                        result = f"✅ 签到成功！登录金钱+{diff}，当前金钱{new_val}"
+                        result = f"✅ 签到成功 | 账号{idx} | 登录金钱+{diff} | 当前金钱: {new_val}"
                     else:
-                        result = f"✅ 签到成功！当前金钱{new_val}"
+                        result = f"✅ 签到成功 | 账号{idx} | 当前金钱: {new_val}"
                 except:
-                    result = f"✅ 签到成功！当前金钱{new_money}"
+                    result = f"✅ 签到成功 | 账号{idx} | 当前金钱: {new_money}"
             else:
-                result = "✅ 今日已签到（积分未变化）"
+                money_part = f" | 当前金钱: {new_money or old_money}" if (new_money or old_money) else ""
+                result = f"✅ 今日已签到 | 账号{idx}{money_part}"
 
             print(result)
             all_results.append({
@@ -155,35 +157,37 @@ def main():
             })
 
         except Exception as e:
-            error_msg = f"账号{idx} 执行异常: {str(e)}"
-            print(error_msg)
+            result = f"❌ 签到失败 | 账号{idx} | 执行异常: {str(e)}"
+            print(result)
             all_results.append({
                 "account": idx,
-                "result": f"❌ 签到失败: {str(e)}",
+                "result": result,
                 "action_type": "failed"
             })
 
     # ==================== 通知逻辑 ====================
+    # ALWAYS_NOTIFY=true：成功/失败都发；false：仅失败时发
+    always_notify = os.getenv('ALWAYS_NOTIFY', 'false').lower() == 'true'
     if all_results:
         print("\n=== ✅ Hassbian签到任务全部执行完毕 ===")
 
         summary_lines = []
-        has_action = False
+        has_fail = False
         for item in all_results:
-            summary_lines.append(f"账号{item['account']}: {item['result']}")
-            if item.get('action_type') in ["success", "failed"]:
-                has_action = True
+            summary_lines.append(item['result'])
+            if item.get('action_type') == "failed":
+                has_fail = True
 
         summary_text = "\n".join(summary_lines)
         print(summary_text)
 
-        if has_action and send:
+        if send and (always_notify or has_fail):
             notify_title = "Hassbian签到结果"
             notify_body = f"【Hassbian论坛多账号签到完成】\n\n{summary_text}\n\n时间: {time.strftime('%Y-%m-%d %H:%M:%S')}"
             send(notify_title, notify_body)
-            print("📨 已发送通知")
+            print("📨 已发送通知" + ("（ALWAYS_NOTIFY=true）" if always_notify and not has_fail else "（存在签到失败）" if has_fail else ""))
         else:
-            print("ℹ️ 所有账号今日已签到，无需发送通知")
+            print("✅ 全部签到成功/已签到，ALWAYS_NOTIFY=false，跳过通知")
 
 if __name__ == "__main__":
     main()

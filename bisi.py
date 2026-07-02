@@ -20,7 +20,7 @@ def get_all_cookies():
 
 def get_sign_stats(cookie):
     try:
-        url = "http://hkcdnmesh.site/plugin.php?id=dsu_paulsign:sign"
+        url = "http://hkcdn4.space/plugin.php?id=dsu_paulsign:sign"
         resp = requests.get(url, headers={"Cookie": cookie}, timeout=15)
         text = resp.text
         stats = {}
@@ -43,7 +43,7 @@ def get_sign_stats(cookie):
 
 def get_current_money(cookie):
     try:
-        url = "http://hkcdnmesh.site/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu"
+        url = "http://hkcdn4.space/home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1&ajaxtarget=extcreditmenu_menu"
         resp = requests.get(url, headers={"Cookie": cookie}, timeout=15)
         match = re.search(r'<span[^>]*id=["\']hcredit_2["\'][^>]*>(.*?)</span>', resp.text)
         return match.group(1).strip() if match else None
@@ -55,6 +55,7 @@ if os.getenv("RANDOM_SIGNIN", "false").lower() == "true":
     print(f"⏳ 随机延迟 {delay} 秒...")
     time.sleep(delay)
 
+always_notify = os.getenv("ALWAYS_NOTIFY", "false").lower() == "true"
 cookie_list = get_all_cookies()
 all_results = []
 
@@ -63,7 +64,7 @@ for idx, cookie in enumerate(cookie_list, 1):
 
     try:
         sign_page = requests.get(
-            "http://hkcdnmesh.site/plugin.php?id=dsu_paulsign:sign",
+            "http://hkcdn4.space/plugin.php?id=dsu_paulsign:sign",
             headers={"Cookie": cookie},
             timeout=15
         ).text
@@ -90,7 +91,7 @@ for idx, cookie in enumerate(cookie_list, 1):
 
         post_data = {"formhash": formhash, "qdxq": "fd"}
         requests.post(
-            "http://hkcdnmesh.site/plugin.php?id=dsu_paulsign:sign&operation=qiandao&infloat=1",
+            "http://hkcdn4.space/plugin.php?id=dsu_paulsign:sign&operation=qiandao&infloat=1",
             headers={"Cookie": cookie},
             data=post_data,
             timeout=15
@@ -109,15 +110,22 @@ for idx, cookie in enumerate(cookie_list, 1):
 
         print(result_text)
         all_results.append(result_text)
-        send("比思论坛签到", result_text)
 
     except Exception as e:
-        error_msg = f"❌ 执行异常 | 账号{idx}: {str(e)}"
+        error_msg = f"❌ 签到失败 | 账号{idx} | 执行异常: {str(e)}"
         print(error_msg)
         all_results.append(error_msg)
 
 if all_results:
     print("\n【比思论坛签到】结果汇总：")
     print("\n".join(all_results))
+
+    # ALWAYS_NOTIFY=true：成功/失败都发；false：仅失败时发
+    has_fail = any("❌" in r or "执行异常" in r or "失败" in r for r in all_results)
+    if send and (always_notify or has_fail):
+        send("比思论坛签到", "\n".join(all_results))
+        print("🎉 通知已发送" + ("（ALWAYS_NOTIFY=true）" if always_notify and not has_fail else "（存在签到失败）" if has_fail else ""))
+    else:
+        print("✅ 全部签到成功/已签到，ALWAYS_NOTIFY=false，跳过通知")
 
 print("【比思论坛签到】任务执行完毕")

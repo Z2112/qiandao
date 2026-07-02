@@ -23,6 +23,7 @@ if not JINJIANG_COOKIE:
     sys.exit(1)
 
 random_signin = os.getenv('RANDOM_SIGNIN', 'false').lower() == 'true'
+always_notify = os.getenv('ALWAYS_NOTIFY', 'false').lower() == 'true'
 if random_signin:
     try:
         max_d = int(os.getenv('MAX_RANDOM_DELAY', 3600))
@@ -76,11 +77,11 @@ for idx, cookie in enumerate(cookies_list, 1):
             "70003" in str(message)
         )
 
+        points_msg = ""
+        is_fail = False
         if is_already_signed:
             print("ℹ️ 今日已签到，无需重复操作")
-            sign_result = "✅ 今日已签到"
-            notify_flag = False
-
+            sign_result = f"✅ 今日已签到 | 账号{idx}"
         else:
             # ====================== 正确提取 signdays 和 coins ======================
             signdays = result.get("signdays")
@@ -103,30 +104,29 @@ for idx, cookie in enumerate(cookies_list, 1):
             if coins:
                 print(f"💎【月石余额】{coins} 枚")
 
-            if signdays and coins:
-                points_msg = f"🔥 连续签到 {signdays} 天，月石 {coins} 枚"
-            elif signdays:
-                points_msg = f"🔥 连续签到 {signdays} 天"
-            else:
-                points_msg = message
+            parts = ["✅ 签到成功", f"账号{idx}"]
+            if signdays:
+                parts.append(f"连续签到{signdays}天")
+            if coins:
+                parts.append(f"月石: {coins}")
+            if not signdays and not coins and message:
+                parts.append(message)
+            sign_result = " | ".join(parts)
+            points_msg = sign_result
+            print(f"📊 {sign_result}")
 
-            print(f"📊 {points_msg}")
-
-            sign_result = "✅ 签到成功"
-            notify_flag = True
-
-        # 通知
-        if notify_flag and send:
-            notify_content = f"账号: {masked}\n{sign_result}"
-            if 'points_msg' in locals():
-                notify_content += f"\n\n{points_msg}"
-            send("晋江文学城签到", notify_content)
-
-        if not notify_flag:
-            print("ℹ️ 今日已签到，无需通知")
+        # ALWAYS_NOTIFY=true：成功/失败都发；false：仅失败时发
+        if send and (always_notify or is_fail):
+            send("晋江文学城签到", sign_result)
+            print("📨 已推送通知" + ("（ALWAYS_NOTIFY=true）" if always_notify else ""))
+        else:
+            print("✅ 签到成功/已签到，ALWAYS_NOTIFY=false，跳过通知")
 
     except Exception as e:
-        print(f"❌ 执行异常: {e}")
+        error_line = f"❌ 签到失败 | 账号{idx} | 执行异常: {e}"
+        print(error_line)
+        if send:
+            send("晋江文学城签到", error_line)
 
     print(f"{'='*50}")
 

@@ -23,6 +23,8 @@ except ImportError:
 
 # ==================== 环境变量 ====================
 TESTFLIGHT_URLS = os.getenv('TESTFLIGHT_URLS', '')
+# ALWAYS_NOTIFY=true：每次检测都发状态；false：仅有库存时通知（默认）
+ALWAYS_NOTIFY = os.getenv('ALWAYS_NOTIFY', 'false').lower() == 'true'
 
 if not TESTFLIGHT_URLS:
     print("❌ 未设置环境变量 TESTFLIGHT_URLS，请在青龙环境变量中添加")
@@ -79,7 +81,9 @@ def get_with_retry(url, max_retries=3, timeout=30):
 
 previous_state = load_state()
 current_state = {}
-notify_msg = ""
+status_lines = []
+stock_notify_msg = ""
+has_error = False
 
 print("🚀 开始执行 TestFilght 库存监控...")
 
@@ -117,24 +121,37 @@ for url in urls:
 
         status = "已满" if is_full else "✅ 有库存！可立即加入"
         current_state[code] = not is_full
+        status_lines.append(f"📌 {app_name} ({code}): {status}\n🔗 {url}")
 
         print(f"📌 {app_name} ({code}): {status}")
 
-        # 仅【从已满变为有库存】时通知
+        # 仅【从已满变为有库存】时计入库存通知
         prev_available = previous_state.get(code, False)
         if not is_full and not prev_available:
-            notify_msg += f"🚨 【{app_name}】TestFlight 有库存啦！\n🔗 {url}\n\n"
+            stock_notify_msg += f"🚨 【{app_name}】TestFlight 有库存啦！\n🔗 {url}\n\n"
 
     except Exception as e:
         print(f"❌ 检查 {code} 失败: {e}")
         current_state[code] = False
+        has_error = True
+        status_lines.append(f"❌ 检查 {code} 失败: {e}")
 
 save_state(current_state)
 
-if notify_msg:
-    send("TestFilght库存提醒", notify_msg + f"检测时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+# ALWAYS_NOTIFY=true：每次都发状态汇总；false：仅有新库存或检查失败时通知
+if ALWAYS_NOTIFY:
+    content = "\n\n".join(status_lines) + f"\n\n检测时间: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+    if stock_notify_msg:
+        content = stock_notify_msg + "\n" + content
+    send("TestFilght库存监控", content)
+    print("✅ 已发送状态通知（ALWAYS_NOTIFY=true）")
+elif stock_notify_msg:
+    send("TestFilght库存提醒", stock_notify_msg + f"检测时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("✅ 已发送库存可用通知！")
+elif has_error:
+    send("TestFilght库存监控", "\n".join(status_lines) + f"\n\n检测时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print("✅ 已发送失败通知（存在检查失败）")
 else:
-    print("📭 本次无新库存开放（或状态无变化）")
+    print("📭 本次无新库存开放（或状态无变化），ALWAYS_NOTIFY=false，跳过通知")
 
 print("🎉 TestFilght库存监控任务执行完成")

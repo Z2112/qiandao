@@ -8,7 +8,8 @@
 # 【可选变量】
 #    RANDOM_SIGNIN      → true 开启随机延迟（默认 false）
 #    MAX_RANDOM_DELAY   → 最大随机延迟秒数（默认 3600 秒 = 1小时）
-# 【通知逻辑】 今日已签到 → 仅打印日志，不通知；签到成功或失败 → 通过青龙通知系统推送
+#    ALWAYS_NOTIFY      → true 成功/失败都通知；false 仅失败通知（默认 false）
+# 【通知逻辑】 ALWAYS_NOTIFY=true 始终通知；false 时仅签到失败才通知
 #
 # 【详细使用步骤】
 #
@@ -112,6 +113,7 @@ def create_session_from_cookies(cookies):
 # ==================== 随机延迟（可选） ====================
 random_signin = os.getenv('RANDOM_SIGNIN', 'false').lower() == 'true'
 max_random_delay = os.getenv('MAX_RANDOM_DELAY')
+always_notify = os.getenv('ALWAYS_NOTIFY', 'false').lower() == 'true'
 
 if random_signin:
     try:
@@ -155,39 +157,36 @@ def main():
         data_sign = resp_sign.json()
 
         # 正确判断签到结果：优先检查 errorCode
+        is_fail = False
         if "errorCode" in data_sign:
             error_code = data_sign.get("errorCode")
             error_msg = data_sign.get("errorMsg", error_code)
-            sign_result = f"❌ 签到失败: {error_msg}"
-            notify_flag = True
+            sign_result = f"❌ 签到失败 | {error_msg}"
+            is_fail = True
         else:
             is_sign = data_sign.get("isSign", 0)
             netdisk_bonus = data_sign.get("netdiskBonus", 0)
 
             if str(is_sign) == "1":
                 sign_result = "✅ 今日已签到"
-                notify_flag = False
             else:
-                sign_result = f"✅ 签到成功，获得 {netdisk_bonus}M 空间"
-                notify_flag = True
+                sign_result = f"✅ 签到成功 | 获得 {netdisk_bonus}M 空间"
 
         print(f"📢 签到结果: {sign_result}")
 
-        # 构建结果（仅签到结果）
-        result_msg = sign_result
-
         # ==================== 通知 ====================
-        if notify_flag and send:
+        # ALWAYS_NOTIFY=true：成功/失败都发；false：仅失败时发
+        if send and (always_notify or is_fail):
             if "签到失败" in sign_result:
                 title = "❌ 天翼云盘签到失败"
             elif "今日已签到" in sign_result:
                 title = "ℹ️ 天翼云盘今日已签到"
             else:
                 title = "✅ 天翼云盘签到成功"
-            send(title, result_msg)
-            print("📨 已推送通知")
-        elif not notify_flag:
-            print("ℹ️ 今日已签到，无需通知")
+            send(title, sign_result)
+            print("📨 已推送通知" + ("（ALWAYS_NOTIFY=true）" if always_notify and not is_fail else ""))
+        else:
+            print("✅ 签到成功/已签到，ALWAYS_NOTIFY=false，跳过通知")
 
     except Exception as e:
         error_msg = f"❌ 执行异常: {str(e)}"
