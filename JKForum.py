@@ -345,10 +345,7 @@ def process_account(cookies, account_num, total_accounts):
             break
 
     if not any(not t.get("isCompleted") for t in tasks):
-        print("\n✅ 所有任务已完成")
-        # 全部完成时未再调签到接口，按已签到处理
-        if signin_status is None:
-            signin_status = "already_signed"
+        print("\n[结果] 所有任务已完成")
     else:
         print("\n🔄 开始处理未完成任务")
 
@@ -400,13 +397,7 @@ def process_account(cookies, account_num, total_accounts):
                 if complete_task(cookies, task["id"]):
                     print(f"    ✅ 已领取: {task['name']}")
 
-        # 刷新后若签到任务已完成，补齐状态
-        if signin_status is None:
-            for t in tasks:
-                if t.get("name") == "進行每日簽到" and t.get("isCompleted"):
-                    signin_status = "already_signed"
-                    break
-
+    # 领取总奖励
     stage_result = claim_daily_stage_rewards(cookies)
     clear_all_notifications(cookies)
 
@@ -415,15 +406,8 @@ def process_account(cookies, account_num, total_accounts):
                 for name in TRACK_KEYS.values()
                 if after_assets.get(name, 0) - before_assets.get(name, 0) != 0]
 
-    print(f"\n📊 本次运行资产变化： {' | '.join(increase) if increase else '无变化'}")
-    print(f"💰 当前总资产：金币: {after_assets.get('金币', 0)}  宝石: {after_assets.get('宝石', 0)}")
-
-    # skipped 仅表示本次无需再签；有成功领奖/资产变化时也按已签到展示
-    if signin_status is None:
-        if stage_result.get("status") in ("done", "skipped") and stage_result.get("failed", 0) == 0:
-            signin_status = "already_signed"
-        else:
-            signin_status = "skipped"
+    print(f"\n【本次运行资产变化】 {' | '.join(increase) if increase else '无变化'}")
+    print(f"[当前总资产] 金币: {after_assets.get(' 金币', 0)}  宝石: {after_assets.get('宝石', 0)}")
 
     return {
         "account_num": account_num,
@@ -451,42 +435,29 @@ def jkforum_main():
         if cookies:
             results.append(process_account(cookies, idx, len(parse_multi_cookies(JKFORUM_COOKIE))))
 
-    def build_notify_line(r):
-        stage = r.get("stage_result") or {}
-        assets = r.get("current_assets") or {}
-        success = stage.get("success", 0)
-        failed = stage.get("failed", 0)
-        signin = r.get("signin_status", "unknown")
-        if signin == "success":
-            sign_line = f"✅ 签到成功 | 账号{r['account_num']}"
-        elif signin in ("already_signed", "skipped"):
-            # skipped：任务本已全部完成，无需再次签到 → 视为今日已签到
-            sign_line = f"✅ 今日已签到 | 账号{r['account_num']}"
-        else:
-            sign_line = f"❌ 签到失败 | 账号{r['account_num']} | 状态: {signin}"
-        reward_emoji = "❌" if failed > 0 else "✅"
-        return (
-            f"{sign_line}\n"
-            f"{reward_emoji} 总奖励领取 | 成功 {success} 个 / 失败 {failed} 个\n"
-            f"💰 金币：{assets.get('金币', 0)} | 💎 宝石：{assets.get('宝石', 0)}\n"
-            f"📈 资产变化：{r.get('increase_text', '无变化')}"
-        )
-
-    has_fail = False
+    # ========== 只在总奖励领取有结果时通知 ==========
+    notify_list = []
     for r in results:
-        stage = r.get("stage_result") or {}
-        if r.get("signin_status") == "failed" or stage.get("failed", 0) > 0:
-            has_fail = True
-            break
+        stage = r.get("stage_result", {})
+        if stage.get("status") == "done" and (stage.get("success", 0) > 0 or stage.get("failed", 0) > 0):
+            notify_list.append(r)
 
-    # ALWAYS_NOTIFY=true：成功/失败都发；false：仅失败时发
-    should_notify = bool(results) and (ALWAYS_NOTIFY or has_fail)
+    if notify_list and send:
+        print(f"\n📢 检测到 {len(notify_list)} 个账号的总奖励领取有结果，正在发送通知...")
+        notify_lines = []
+        for r in notify_list:
+            stage = r["stage_result"]
+            assets = r["current_assets"]
+            text = (
+                f"【账号 {r['account_num']}】\n"
+                f"总奖励领取结果：成功 {stage.get('success', 0)} 个，失败 {stage.get('failed', 0)} 个\n"
+                f"金币: {assets.get('金币', 0)}   宝石: {assets.get('宝石', 0)}\n"
+                f"资产变化: {r.get('increase_text', '无变化')}"
+            )
+            notify_lines.append(text)
 
-    if should_notify and send:
-        print(f"\n📢 正在发送通知（账号数: {len(results)}）...")
-        notify_lines = [build_notify_line(r) for r in results]
-        notify_content = "\n\n".join(notify_lines)
-        title = f"JKForum 签到结果 | {datetime.now().strftime('%m-%d %H:%M')} ({len(results)}账号)"
+        notify_content = "\n\n" + "="*40 + "\n\n".join(notify_lines)
+        title = f"JKForum 总奖励领取结果 | {datetime.now().strftime('%m-%d %H:%M')} ({len(notify_list)}账号)"
         send(title, notify_content)
         print("✅ 通知发送完成" + ("（ALWAYS_NOTIFY=true）" if ALWAYS_NOTIFY and not has_fail else "（存在失败）" if has_fail else ""))
     else:
