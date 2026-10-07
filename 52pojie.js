@@ -114,8 +114,8 @@ async function recognizeCaptcha(base64Image) {
 async function doSign(page) {
   console.log('访问签到任务页...');
   await page.goto('https://www.52pojie.cn/home.php?mod=task&do=apply&id=2', {
-    waitUntil: 'networkidle2',
-    timeout: 30000
+    waitUntil: 'domcontentloaded',
+    timeout: 60000
   });
   await delay(4000);
 
@@ -137,7 +137,7 @@ async function doSign(page) {
         await delay(6000);
 
         html = await page.content();
-        if (html.includes('签到成功') || html.includes('获得') || html.includes('任务已完成')) {
+        if (html.includes('签到成功') || /任务已(?:成功)?完成/.test(html)) {
           return { status: 'success', message: '签到成功' };
         }
       }
@@ -145,7 +145,10 @@ async function doSign(page) {
     return { status: 'fail', message: '验证码识别或提交失败' };
   }
 
-  return { status: 'success', message: '签到成功' };
+  if (html.includes('签到成功') || /任务已(?:成功)?完成/.test(html)) {
+    return { status: 'success', message: '签到成功' };
+  }
+  return { status: 'fail', message: '页面未显示签到成功，需复核签到状态' };
 }
 
 async function processAccount(cookieInput, accountIndex) {
@@ -160,12 +163,12 @@ async function processAccount(cookieInput, accountIndex) {
   }
 
   // ==================== 未签到 → 执行签到 ====================
-  console.log('🌐 浏览器已启动');
   let browser;
   let finalResult = '';
 
   try {
     browser = await puppeteer.launch(LAUNCH_OPTIONS);
+    console.log('🌐 浏览器已启动');
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
@@ -180,14 +183,23 @@ async function processAccount(cookieInput, accountIndex) {
 
     for (let attempt = 1; attempt <= MAX_SIGN_ATTEMPTS; attempt++) {
       console.log(`\n🔄 签到尝试 ${attempt}/${MAX_SIGN_ATTEMPTS}`);
-      signResult = await doSign(page);
+      try {
+        signResult = await doSign(page);
+      } catch (err) {
+        const isTimeout = err.name === 'TimeoutError' || /Navigation timeout/i.test(err.message);
+        signResult = {
+          status: 'fail',
+          message: isTimeout ? `签到页面加载超时: ${err.message}` : `签到执行异常: ${err.message}`
+        };
+        console.log(`⚠️ 第 ${attempt} 次尝试失败: ${signResult.message}`);
+      }
 
       if (signResult.status === 'success') {
         break;
       }
 
-      // 验证码识别或提交失败 → 复核是否其实已签到成功
-      console.log('验证码识别或提交失败，重新检查签到状态...');
+      // 包括导航超时在内的失败，先复核是否已经签到成功，再决定是否重试
+      console.log('本次尝试未确认成功，重新检查签到状态...');
       await delay(2000);
       const recheck = await checkSignStatus(cookieInput);
       console.log(`复核状态: ${recheck}`);
@@ -220,14 +232,18 @@ async function processAccount(cookieInput, accountIndex) {
 
       finalResult = `✅ 签到成功 | 账号${accountIndex}${rewardText} | 当前吾爱币: ${newCredits || '未知'}`;
     } else {
-      finalResult = `❌ 签到失败 | 账号${accountIndex} | ${signResult.message}（已重试 ${MAX_SIGN_ATTEMPTS} 次）`;
+      finalResult = `❌ 签到失败 | 账号${accountIndex} | ${signResult.message}（已尝试 ${MAX_SIGN_ATTEMPTS} 次）`;
     }
   } catch (err) {
     finalResult = `❌ 签到失败 | 账号${accountIndex} | 执行异常: ${err.message}`;
   } finally {
     if (browser) {
-      await browser.close();
-      console.log('🔚 浏览器已关闭');
+      try {
+        await browser.close();
+        console.log('🔚 浏览器已关闭');
+      } catch (err) {
+        console.log(`⚠️ 关闭浏览器失败: ${err.message}`);
+      }
     }
   }
 

@@ -1,5 +1,5 @@
 # cron: 0 10 * * *
-# new Env('HIFIKI/HIFINI签到')
+# new Env('HIFINI签到')
 
 import os
 import re
@@ -8,6 +8,24 @@ import time
 import random
 import requests
 from notify import send
+
+
+def request_with_retry(method, url, **kwargs):
+    """连接中断或超时时最多尝试三次，其他请求错误直接抛出。"""
+    kwargs.setdefault("timeout", 15)
+    for attempt in range(1, 4):
+        try:
+            resp = requests.request(method, url, **kwargs)
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.SSLError:
+            raise
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            if attempt == 3:
+                raise
+            delay = 2 ** attempt
+            print(f"⚠️ {method.upper()} 请求连接中断或超时，{delay} 秒后重试（第 {attempt + 1}/3 次）")
+            time.sleep(delay)
 
 
 def get_cookies(env_var):
@@ -22,23 +40,28 @@ def get_cookies(env_var):
 def get_continuous_days(cookie, base_url):
     """从 sg_sign.htm 提取连续签到天数"""
     try:
-        resp = requests.get(f"{base_url}/sg_sign.htm", headers={"Cookie": cookie}, timeout=15)
+        resp = request_with_retry("GET", f"{base_url}/sg_sign.htm", headers={"Cookie": cookie})
         text = resp.text
         match = re.search(r"var s3\s*=\s*['\"]([^'\"]+)['\"]", text)
         if match:
-            return match.group(1)
+            value = match.group(1).strip()
+            days_match = re.search(r'(\d+)\s*天', value)
+            if days_match:
+                return days_match.group(1)
+            if re.fullmatch(r'\d+', value):
+                return value
         match = re.search(r'连续签到\s*(\d+)\s*天', text)
         if match:
             return match.group(1)   # 只返回数字，方便格式化
         return None
-    except:
+    except requests.exceptions.RequestException:
         return None
 
 
 def get_total_coins(cookie, base_url):
     """从 my-credits.htm 获取总金币"""
     try:
-        resp = requests.get(f"{base_url}/my-credits.htm", headers={"Cookie": cookie}, timeout=15)
+        resp = request_with_retry("GET", f"{base_url}/my-credits.htm", headers={"Cookie": cookie})
         text = resp.text
         match = re.search(
             r'<i class="icon-diamond".*?</span>.*?<input[^>]*value="(\d+)"',
@@ -49,7 +72,7 @@ def get_total_coins(cookie, base_url):
             return match.group(1)
         match = re.search(r'金币.*?<input[^>]*value="(\d+)"', text, re.DOTALL)
         return match.group(1) if match else None
-    except:
+    except requests.exceptions.RequestException:
         return None
 
 
@@ -77,20 +100,25 @@ def do_signin(site_name, domain, cookie_list):
         headers["cookie"] = cookie
 
         try:
-            resp = requests.post(sign_url, headers=headers, timeout=15)
+            resp = request_with_retry("POST", sign_url, headers=headers)
 
-            result = resp.json()
+            try:
+                result = resp.json()
+            except ValueError as exc:
+                raise ValueError("签到接口未返回有效 JSON，请检查站点是否返回登录页或验证页面") from exc
+            if not isinstance(result, dict):
+                raise ValueError("签到接口返回的数据格式异常，应为 JSON 对象")
             code = str(result.get("code", ""))
-            message = result.get("message", "")
+            message = str(result.get("message") or "")
 
             # === 今日奖励（支持“总奖励X金币”和“获得X金币”）===
             reward_match = re.search(r'(?:获得|总奖励)\s*(\d+)\s*金币', message)
             reward = reward_match.group(1) if reward_match else None
             reward_str = f"奖励为: {reward}" if reward else ""
 
-            # === 本月连续签到天数 ===
+            # === 连续签到天数 ===
             continuous_days = get_continuous_days(cookie, base_url)
-            monthly_str = f"本月{continuous_days}天" if continuous_days else "本月未知"
+            monthly_str = f"连续签到{continuous_days}天" if continuous_days else "连续签到天数未知"
 
             # === 累计签到天数（尝试从页面提取，如无则留空）===
             total_str = ""
@@ -101,12 +129,12 @@ def do_signin(site_name, domain, cookie_list):
 
             # === 状态判断 ===
             is_fail = False
-            if code == "0" or "成功" in message:
-                status_emoji = "✅"
-                sign_result = "签到成功"
-            elif "今天已经签过" in message:
+            if any(text in message for text in ("今天已经签过", "今日已签到", "今天已签到", "已经签到")):
                 status_emoji = "✅"
                 sign_result = "今日已签到"
+            elif code == "0" or "成功" in message:
+                status_emoji = "✅"
+                sign_result = "签到成功"
             else:
                 status_emoji = "❌"
                 sign_result = "签到失败"
@@ -114,6 +142,8 @@ def do_signin(site_name, domain, cookie_list):
 
             # === 新格式输出：✅/❌ 置前 ===
             parts = [p for p in [f"{site_name} 账号{idx}", monthly_str, total_str, reward_str, coins_str] if p]
+            if is_fail:
+                parts.append(f"原因: {message or ('接口返回 code=' + (code or '未知'))}")
             result_text = " | ".join(parts)
             full_line = f"{status_emoji} {sign_result} | {result_text}"
 
@@ -132,7 +162,7 @@ def do_signin(site_name, domain, cookie_list):
 
 
 def main():
-    print("=== HIFIKI / HIFINI 签到任务开始 ===")
+    print("=== HIFINI 签到任务开始 ===")
 
     # 随机延迟（如果启用）
     if os.getenv("RANDOM_SIGNIN", "false").lower() == "true":
@@ -144,7 +174,6 @@ def main():
             pass
 
     sites = [
-        {"name": "HIFIKI", "domain": "hifiki.com", "env": "HIFIKI_COOKIE"},
         {"name": "HIFINI", "domain": "hifiti.com", "env": "HIFINI_COOKIE"},
     ]
 
@@ -164,12 +193,12 @@ def main():
         all_fail_messages.extend(site_fails)
 
     if all_results:
-        print("\n=== HIFIKI / HIFINI 签到任务全部执行完毕 ===")
+        print("\n=== HIFINI 签到任务全部执行完毕 ===")
         print("\n".join(all_results))
 
     # ALWAYS_NOTIFY=true：成功/失败都发；false：仅失败时发
     if send and all_results and (always_notify or all_fail_messages):
-        title = "HIFIKI/HIFINI 签到汇总"
+        title = "HIFINI 签到汇总"
         content = "\n".join(all_results)
         send(title, content)
         print(f"\n📢 已发送统一推送通知（共 {len(all_results)} 条）" +
