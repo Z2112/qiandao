@@ -35,6 +35,8 @@ RANDOM_SIGNIN = os.getenv("RANDOM_SIGNIN", "false").lower() == "true"
 MAX_RANDOM_DELAY = positive_env_int("MAX_RANDOM_DELAY", 3600)
 ALWAYS_NOTIFY = os.getenv("ALWAYS_NOTIFY", "false").lower() == "true"
 MAX_TASK_ROUNDS = 3
+LIKE_PROGRESS_POLLS = 2
+LIKE_TASK_NAMES = {"article_likes": "對三篇文章點讚", "comment_likes": "對三則留言點讚"}
 BASE_URL = "https://jkforum.net"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36",
@@ -245,8 +247,13 @@ def get_article_list(client, board_id, limit=60):
 
 
 def get_article_detail(client, article_id):
-    client.request("GET", f"/api/jkf-forum/v1/ArticleThread/{article_id}")
-    return True
+    response = client.request("GET", f"/api/jkf-forum/v1/ArticleThread/{article_id}")
+    try:
+        data = response.json()
+    except ValueError:
+        return {}
+    content = data.get("content") if isinstance(data, dict) else None
+    return content if isinstance(content, dict) else {}
 
 
 def get_comments(client, article_id, limit=6):
@@ -263,34 +270,93 @@ def new_action_state():
     return {"viewed": set(), "article_likes": set(), "comment_likes": set()}
 
 
+def like_task_remaining(tasks, action):
+    task = next((task for task in tasks if task["name"] == LIKE_TASK_NAMES[action]), None)
+    if task is None or (not task.get("isCompleted") and not task.get("details")):
+        raise APIError(f"无法复核 {LIKE_TASK_NAMES[action]} 的任务进度")
+    if task.get("isCompleted"):
+        return 0
+    current, goal = get_task_progress(task)
+    return goal - current
+
+
+def refresh_like_progress(client, action, previous_remaining):
+    # 先给服务端计数留出时间；仍未增长时再读一次，避免延迟导致额外点赞。
+    for _ in range(LIKE_PROGRESS_POLLS):
+        time.sleep(2)
+        tasks = get_daily_tasks(client)
+        remaining = like_task_remaining(tasks, action)
+        if remaining < previous_remaining or remaining == 0:
+            break
+    return tasks
+
+
+def already_liked(item):
+    # 仅使用接口明确给出的布尔标记；字段缺失时不能推断为未点赞。
+    return any(item.get(key) is True for key in ("isLiked", "isLike"))
+
+
 def do_browse_and_like_tasks(client, browse_count=0, like_article_count=0,
                              like_comment_count=0, state=None):
     state = state if state is not None else new_action_state()
     counts = {"viewed": 0, "article_likes": 0, "comment_likes": 0}
     targets = {"viewed": browse_count, "article_likes": like_article_count,
                "comment_likes": like_comment_count}
+    remaining = dict(targets)
+    attempts = {key: 0 for key in LIKE_TASK_NAMES}
+    # 每个缺口最多尝试三个不同目标，每类点赞每轮至多12次，不能无限补做。
+    budgets = {key: min(12, max(3, targets[key] * 3)) for key in LIKE_TASK_NAMES}
+    blocked = set()
+
+    def needs_action(key):
+        return remaining[key] > 0 and key not in blocked and (
+            key == "viewed" or attempts[key] < budgets[key]
+        )
+
+    def verify_like(action):
+        try:
+            tasks = refresh_like_progress(client, action, remaining[action])
+            for key in LIKE_TASK_NAMES:
+                if targets[key]:
+                    remaining[key] = like_task_remaining(tasks, key)
+            print(f"    📋 {LIKE_TASK_NAMES[action]} 刷新后剩余 {remaining[action]}")
+        except APIError as exc:
+            blocked.add(action)
+            print(f"    ⚠️ {exc}；暂停本轮该类点赞，避免在未知进度下继续操作")
+
     print(f"\n🔄 按剩余进度执行：浏览 {browse_count}，文章点赞 {like_article_count}，留言点赞 {like_comment_count}")
     boards = list(VIEW_BOARDS)
     random.shuffle(boards)
     for board_id in boards:
-        if all(counts[key] >= targets[key] for key in targets):
+        if not any(needs_action(key) for key in targets):
             break
         try:
             articles = get_article_list(client, board_id, limit=80)
         except APIError as exc:
             print(f"    ⚠️ {exc}")
             continue
+        articles = list(articles)
+        random.shuffle(articles)
         for article in articles:
-            if all(counts[key] >= targets[key] for key in targets):
+            if not any(needs_action(key) for key in targets):
                 break
-            article_id = article.get("id")
-            if not article_id:
+            if not article.get("id"):
+                continue
+            article_id = str(article["id"])
+            article_board = article.get("boardId") or board_id
+            can_like_article = (needs_action("article_likes")
+                                and article_id not in state["article_likes"]
+                                and not already_liked(article))
+            if not needs_action("viewed") and not can_like_article and not needs_action("comment_likes"):
                 continue
             if article_id not in state["viewed"]:
                 try:
-                    get_article_detail(client, article_id)
+                    detail = get_article_detail(client, article_id)
+                    if isinstance(detail, dict) and already_liked(detail):
+                        state["article_likes"].add(article_id)
                     state["viewed"].add(article_id)
                     counts["viewed"] += 1
+                    remaining["viewed"] = max(0, browse_count - counts["viewed"])
                     print(f"    👀 已访问文章 {article_id}")
                     time.sleep(random.randint(2, 3))
                 except APIError as exc:
@@ -300,20 +366,23 @@ def do_browse_and_like_tasks(client, browse_count=0, like_article_count=0,
             actions = ["article_likes", "comment_likes"]
             random.shuffle(actions)
             for action in actions:
-                if counts[action] >= targets[action]:
+                if not needs_action(action):
                     continue
                 if action == "article_likes":
-                    if article_id in state[action]:
+                    if article_id in state[action] or already_liked(article):
                         continue
                     # 不重复提交相同点赞，避免未知结果下再次提交造成反向操作。
                     state[action].add(article_id)
+                    attempts[action] += 1
                     try:
-                        client.request("PUT", f"/api/jkf-forum/v1/ArticleLike/{board_id}/{article_id}", expected=(204,))
+                        client.request("PUT", f"/api/jkf-forum/v1/ArticleLike/{article_board}/{article_id}", expected=(204,))
                         counts[action] += 1
-                        print(f"    👍 文章点赞成功: {article_id}")
+                        print(f"    👍 文章点赞请求返回204: {article_id}，待任务进度确认")
                         time.sleep(random.randint(3, 5))
                     except APIError as exc:
                         print(f"    ⚠️ {exc}")
+                    # 即使响应丢失，也先读进度；相同目标始终不会重复提交。
+                    verify_like(action)
                 else:
                     try:
                         comments = get_comments(client, article_id)
@@ -322,23 +391,27 @@ def do_browse_and_like_tasks(client, browse_count=0, like_article_count=0,
                         continue
                     random.shuffle(comments)
                     for comment in comments:
-                        if counts[action] >= targets[action]:
+                        if not needs_action(action):
                             break
-                        comment_id = comment.get("id")
-                        if not comment_id or comment_id in state[action]:
+                        if not comment.get("id"):
+                            continue
+                        comment_id = str(comment["id"])
+                        if comment_id in state[action] or already_liked(comment):
                             continue
                         state[action].add(comment_id)
+                        attempts[action] += 1
                         try:
-                            client.request("PUT", f"/api/jkf-forum/v1/CommentLike/{board_id}/{comment_id}", expected=(204,))
+                            client.request("PUT", f"/api/jkf-forum/v1/CommentLike/{article_board}/{comment_id}", expected=(204,))
                             counts[action] += 1
-                            print(f"    💬 留言点赞成功: {comment_id}")
+                            print(f"    💬 留言点赞请求返回204: {comment_id}，待任务进度确认")
                             time.sleep(random.randint(3, 5))
                         except APIError as exc:
                             print(f"    ⚠️ {exc}")
-    print(f"📊 本轮实际访问文章 {counts['viewed']} 篇，文章点赞 {counts['article_likes']}，留言点赞 {counts['comment_likes']}")
+                        verify_like(action)
+    print(f"📊 本轮实际访问文章 {counts['viewed']} 篇，文章点赞204响应 {counts['article_likes']}，留言点赞204响应 {counts['comment_likes']}")
     for key in targets:
-        if counts[key] < targets[key]:
-            print(f"    ⚠️ 本轮 {key} 不足：{counts[key]}/{targets[key]}，将以刷新后的任务进度补做")
+        if remaining[key]:
+            print(f"    ⚠️ 本轮 {key} 仍缺 {remaining[key]}，将以刷新后的任务进度补做")
     return counts
 
 
@@ -353,7 +426,7 @@ def browse_specific_boards(client, task_names, state):
             client.request("GET", f"/api/jkf-forum/v1/Board/{board_id}")
             articles = get_article_list(client, board_id, limit=1)
             if articles and articles[0].get("id"):
-                article_id = articles[0]["id"]
+                article_id = str(articles[0]["id"])
                 if article_id not in state["viewed"]:
                     get_article_detail(client, article_id)
                     state["viewed"].add(article_id)
@@ -399,17 +472,33 @@ def get_daily_stages(client):
     return stages
 
 
+def stage_readiness(stage):
+    """返回明确的进度判断；未提供条件字段时保留为未知，不猜阶段阈值。"""
+    details = stage.get("details")
+    if details and isinstance(details, list) and all(
+        isinstance(item, dict) and "progressScore" in item and "goalScore" in item
+        for item in details
+    ):
+        current, goal = get_task_progress({"name": f"阶段 {stage['id']}", "details": details})
+        return current >= goal, f"进度 {current}/{goal}"
+    if "progressScore" in stage and "goalScore" in stage:
+        current, goal = get_task_progress({"name": f"阶段 {stage['id']}", "details": [stage]})
+        return current >= goal, f"进度 {current}/{goal}"
+    return None, "接口未提供可识别的阶段条件"
+
+
 def claim_daily_stage_rewards(client):
     print("\n🎁 领取每日任务阶段总奖励")
     initial = set()
     verified = set()
     reasons = {}
+    attempted = set()
     try:
         stages = get_daily_stages(client)
         initial = {stage["id"] for stage in stages if not stage.get("isCompleted")}
         if not initial:
             print("    ✅ 阶段总奖励已全部领取")
-            return {"status": "skipped", "success": 0, "failed": 0, "errors": []}
+            return {"status": "skipped", "success": 0, "failed": 0, "pending": 0, "pending_reasons": [], "errors": []}
         for attempt in range(1, MAX_TASK_ROUNDS + 1):
             pending = [stage for stage in stages if not stage.get("isCompleted")]
             if not pending:
@@ -417,6 +506,16 @@ def claim_daily_stage_rewards(client):
             for stage in pending:
                 stage_id = stage["id"]
                 initial.add(stage_id)
+                ready, detail = stage_readiness(stage)
+                if ready is False:
+                    print(f"    ℹ️ 阶段 {stage_id} 尚未达标（{detail}），暂不领取")
+                    continue
+                if stage_id in attempted:
+                    continue
+                # 条件未知时仍允许领取可用的低阶段奖励，但每个阶段最多提交一次。
+                if ready is None:
+                    print(f"    ℹ️ 阶段 {stage_id} {detail}，只尝试一次并刷新复核")
+                attempted.add(stage_id)
                 try:
                     resp = client.request(
                         "POST", "/api/jkf-dailyTask-api/v1/DailyStage/CompleteStage",
@@ -424,7 +523,7 @@ def claim_daily_stage_rewards(client):
                     )
                     if resp.content:
                         data = resp.json()
-                        if isinstance(data, dict) and data.get("code") is not None and str(data["code"]) != "200000":
+                        if isinstance(data, dict) and data.get("code") is not None and str(data["code"]) not in ("200000", "201000"):
                             raise APIError(f"stageId={stage_id}: {client.error_detail(resp)}")
                     print(f"    阶段 {stage_id} 领取请求已返回，正在复核")
                 except (APIError, ValueError) as exc:
@@ -434,17 +533,27 @@ def claim_daily_stage_rewards(client):
             stages = get_daily_stages(client)
             verified.update(stage["id"] for stage in stages if stage.get("isCompleted"))
         remaining = initial - verified
+        last_stages = {stage["id"]: stage for stage in stages}
+        waiting = {}
+        for stage_id in remaining:
+            if stage_id in last_stages:
+                ready, detail = stage_readiness(last_stages[stage_id])
+                if ready is False and stage_id not in attempted:
+                    waiting[stage_id] = f"阶段 {stage_id} 待达标: {detail}"
+        failed = remaining - set(waiting)
         errors = [
             f"阶段 {stage_id} 未确认领取: {reasons.get(stage_id, '刷新后仍未完成')}"
-            for stage_id in sorted(remaining, key=str)
+            for stage_id in sorted(failed, key=str)
         ]
-        print(f"    阶段总奖励确认领取 {len(initial & verified)} 个，未确认 {len(remaining)} 个")
-        return {"status": "done", "success": len(initial & verified), "failed": len(remaining), "errors": errors}
+        print(f"    阶段总奖励确认领取 {len(initial & verified)} 个，待达标 {len(waiting)} 个，未确认 {len(failed)} 个")
+        return {"status": "failed" if failed else "pending" if waiting else "done",
+                "success": len(initial & verified), "failed": len(failed), "pending": len(waiting),
+                "pending_reasons": [waiting[key] for key in sorted(waiting, key=str)], "errors": errors}
     except APIError as exc:
         errors = [str(exc)]
         print(f"    ❌ 阶段总奖励复核失败: {exc}")
         return {"status": "failed", "success": len(initial & verified),
-                "failed": max(1, len(initial - verified)), "errors": errors}
+                "failed": max(1, len(initial - verified)), "pending": 0, "pending_reasons": [], "errors": errors}
 
 
 def clear_all_notifications(client):
@@ -558,6 +667,7 @@ def process_account(client, account_num, total_accounts):
 
     stage_result = claim_daily_stage_rewards(client)
     errors.extend(stage_result["errors"])
+    errors.extend(stage_result.get("pending_reasons", []))
     clear_all_notifications(client)
 
     try:
@@ -588,9 +698,12 @@ def process_account(client, account_num, total_accounts):
 def build_summary(result):
     stage = result.get("stage_result", {})
     assets = result.get("current_assets", {})
+    stage_text = f"阶段总奖励：确认领取 {stage.get('success', 0)} 个，未确认 {stage.get('failed', 0)} 个"
+    if stage.get("pending"):
+        stage_text += f"，待达标 {stage['pending']} 个"
     lines = [
         f"{'❌' if result['has_fail'] else '✅'} 账号 {result['account_num']}",
-        f"阶段总奖励：确认领取 {stage.get('success', 0)} 个，未确认 {stage.get('failed', 0)} 个",
+        stage_text,
         f"金币: {assets.get('金币', '未知')} | 宝石: {assets.get('宝石', '未知')}",
         f"资产变化: {result.get('increase_text', '未知')}",
     ]
@@ -601,7 +714,7 @@ def build_summary(result):
 
 
 def jkforum_main():
-    print(f"🚀 JKForum 签到脚本 v2.8 启动 - {now_text()}")
+    print(f"🚀 JKForum 签到脚本 v2.9 启动 - {now_text()}")
     cookie_strings = parse_multi_cookies(JKFORUM_COOKIE)
     if not cookie_strings:
         print("❌ 未设置有效的 JKFORUM_COOKIE")
